@@ -15,8 +15,8 @@ from whisper_jax import FlaxWhisperForConditionalGeneration, InferenceState, Pji
 
 datasets.logging.set_verbosity(datasets.logging.CRITICAL)
 
-cc.initialize_cache("./jax_cache")
-jax.config.update("jax_array", True)
+cc.set_cache_dir("./jax_cache")
+#jax.config.update("jax_array", True)
 
 
 def parse_args():
@@ -25,7 +25,7 @@ def parse_args():
         "--model_parallel_submesh",
         type=int,
         nargs="+",
-        default=(2, 2, 1, 1),
+        default=(2,2, 1, 1),
         help="Model parallel submesh.",
     )
     args = parser.parse_args()
@@ -35,19 +35,19 @@ def parse_args():
 BATCH_SIZES = [4, 8, 16, 32]
 NUM_BATCHES = 100
 NUM_TOKENS = 25
-CHECKPOINT = "large-v2"
+CHECKPOINT = "large-v3"
 
 # 2D parameter and activation partitioning for DP
 logical_axis_rules_dp = [
     ("batch", "data"),
-    ("mlp", None),
-    ("heads", None),
+    ("mlp", "model"),
+    ("heads", "model"),
     ("vocab", None),
-    ("embed", None),
-    ("embed", None),
-    ("joined_kv", None),
+    ("embed", "model"),
+    ("embed", "model"),
+    ("joined_kv", "model"),
     ("kv", None),
-    ("length", None),
+    ("length", "model"),
     ("num_mel", None),
     ("channels", None),
 ]
@@ -57,7 +57,7 @@ def main():
     args = parse_args()
     print(args.model_parallel_submesh)
     # processors/tokenizers are the same for all models, so just load from tiny and preprocess once
-    processor = WhisperProcessor.from_pretrained("openai/whisper-tiny.en")
+    processor = WhisperProcessor.from_pretrained("openai/whisper-large-v3")
 
     def preprocess(batch):
         batch["input_features"] = processor(
@@ -74,7 +74,7 @@ def main():
     params = model.init_weights(model.key, model.input_shape)
 
     def init_fn():
-        input_shape = (1, 80, 3000)
+        input_shape = (1, 128, 3000)
 
         input_features = jnp.zeros(input_shape, dtype="f4")
         input_features = input_features.at[(..., -1)].set(model.config.eos_token_id)
@@ -109,7 +109,8 @@ def main():
     )
 
     partitioner = PjitPartitioner(
-        num_partitions=1,
+        #num_partitions=1,
+        model_parallel_submesh=(2,2,1,1),
         logical_axis_rules=logical_axis_rules_dp,
     )
 
@@ -124,8 +125,8 @@ def main():
 
     p_generate = partitioner.partition(
         generate,
-        in_axis_resources=(params_spec, P("data")),
-        out_axis_resources=P("data"),
+        in_axis_resources=(params_spec, P("data","model")),
+        out_axis_resources=P("data",None),
     )
 
     # This will auto-magically run in mesh context
