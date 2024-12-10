@@ -173,3 +173,5 @@ tags
 wandb
 
 jax_cache/
+
+transcriptions.csv

@@ -15,7 +15,7 @@ import os
 import librosa
 from silero_vad import load_silero_vad, read_audio, get_speech_timestamps
 datasets.logging.set_verbosity(datasets.logging.CRITICAL)
-
+import csv
 cc.set_cache_dir("./jax_cache")
 #jax.config.update("jax_array", True)
 
@@ -140,7 +140,7 @@ logical_axis_rules_dp = [
 
 
 def main():
-
+    BATCH_SIZE = 128
     # processors/tokenizers are the same for all models, so just load from tiny and preprocess once
     processor = WhisperProcessor.from_pretrained("openai/whisper-large-v3")
     model, params = FlaxWhisperForConditionalGeneration.from_pretrained(
@@ -153,10 +153,7 @@ def main():
         for token, token_id in zip(processor.tokenizer.all_special_tokens,processor.tokenizer.all_special_ids):
             if token.strip("<|>") in LANGUAGES:
                 result.append(token_id)
-        return tuple(result)#[: self.num_languages]
-    #print(all_language_tokens())
-    #params = np.asarray(params)
-    #params = model.init_weights(model.key, model.input_shape,params=params)
+        return tuple(result)
     def init_fn():
         input_shape = (1, 128, 3000)
 
@@ -203,77 +200,93 @@ def main():
 
     p_shard_params = partitioner.partition(model.to_bf16, (params_spec,), params_spec)
 
-    def generate(params, input_features):
-        output_ids = model.generate(input_features, params=params,language="en").sequences
+    def generate(params, input_features,language):
+        output_ids = model.generate(input_features, params=params,language=language).sequences
         return output_ids
 
     p_generate = partitioner.partition(
         generate,
         in_axis_resources=(params_spec, P("data")),
         out_axis_resources=P("data"),
+        static_argnums=(2,)
     )
     params = jax.device_put(params,jax.devices()[0])
     # This will auto-magically run in mesh context
     params = p_shard_params(freeze(params))
     silereo_model = load_silero_vad()
 
-    start = time.time()
+    
     supported_formats = ('.wav', '.mp3', '.flac', '.ogg', '.m4a')
+    output_csv = "transcriptions.csv"
+    with open(output_csv, mode='w', newline='', encoding='utf-8') as csvfile:
+        csv_writer = csv.writer(csvfile)
+        csv_writer.writerow(["File Name", "Start Time", "End Time", "Language", "Transcription"])
+        # 遍历文件夹
+        for root, _, files in os.walk("/bucket/aurora_filtered"):
+            for file in files:
+                count_start_time = time.time()
+                # 检查文件扩展名是否是支持的格式
+                if file.lower().endswith(supported_formats):
+                    file_path = os.path.join(root, file)
 
-    # 遍历文件夹
-    for root, _, files in os.walk("/bucket/aurora_filtered"):
-        for file in files:
-            # 检查文件扩展名是否是支持的格式
-            if file.lower().endswith(supported_formats):
-                file_path = os.path.join(root, file)
+                    # 使用 librosa 加载音频文件
+                    audio_data, sample_rate = librosa.load(file_path, sr=16000)  # sr=None 保持原始采样率
+                    print(f"Successfully loaded {file_path}")
+                    print(f"Sample Rate: {sample_rate}, Audio Data Length: {len(audio_data)}")
+                    speech_timestamps = get_speech_timestamps(
+                        audio_data,
+                        silereo_model,
+                        return_seconds=True,  # Return speech timestamps in seconds (default is samples)
+                    )
+                    audio_segments = []
+                    segments_info = []
+                    logits = None
+                    i = 0
+                    for timestamp in speech_timestamps:
+                        start, end = int(timestamp["start"] * sample_rate), int(timestamp["end"] * sample_rate)
+                        segment = audio_data[start:end]
+                        
+                        # 对片段进行预处理
+                        processed_segment = processor(segment, sampling_rate=16000, return_tensors="np")
+                        audio_segments.append(processed_segment.input_features[0])
+                        segments_info.append((file, timestamp["start"], timestamp["end"]))
+                        if i < 4:
+                            encoder_outputs = model.encode(input_features=processed_segment.input_features,params=params)
+                            decoder_start_token_id = model.config.decoder_start_token_id
+                            decoder_input_ids = jnp.ones((processed_segment.input_features.shape[0], 1), dtype="i4") * decoder_start_token_id
+                            outputs = model.decode(decoder_input_ids, encoder_outputs,params=params)
+                            if logits is None:
+                                logits = outputs.logits
+                            else:
+                                logits_add = outputs.logits
+                                logits += logits_add
+                            i += 1
+                    mask = jnp.ones(logits.shape[-1], dtype=jnp.bool)
+                    mask = mask.at[jnp.array(all_language_tokens())].set(False)
+                    logits = logits.at[:,:, mask].set(-jnp.inf)
+                    language_tokens = jnp.argmax(logits,axis=-1)
+                    detected_language = processor.decode(language_tokens[0,0])
+                    print(detected_language)
 
-                # 使用 librosa 加载音频文件
-                audio_data, sample_rate = librosa.load(file_path, sr=16000)  # sr=None 保持原始采样率
-                print(f"Successfully loaded {file_path}")
-                print(f"Sample Rate: {sample_rate}, Audio Data Length: {len(audio_data)}")
-                speech_timestamps = get_speech_timestamps(
-                    audio_data,
-                    silereo_model,
-                    return_seconds=True,  # Return speech timestamps in seconds (default is samples)
-                )
-                stacked_audio = []
-                logits = None
-                i = 0
-                for timestamp in speech_timestamps:
-                    start, end = int(timestamp["start"] * sample_rate), int(timestamp["end"] * sample_rate)
-                    segment = audio_data[start:end]
-                    
-                    # 对片段进行预处理
-                    processed_segment = processor(segment, sampling_rate=16000, return_tensors="np")
-                    stacked_audio.append(processed_segment.input_features[0])
-                    if i < 4:
-                        encoder_outputs = model.encode(input_features=processed_segment.input_features,params=params)
-                        decoder_start_token_id = model.config.decoder_start_token_id
-                        decoder_input_ids = jnp.ones((processed_segment.input_features.shape[0], 1), dtype="i4") * decoder_start_token_id
-                        outputs = model.decode(decoder_input_ids, encoder_outputs,params=params)
-                        if logits is None:
-                            logits = outputs.logits
+                    rounds = (len(audio_segments)-1) // BATCH_SIZE + 1
+                    pred_ids_result = None
+                    for i in range(rounds):
+                        stacked_audio = audio_segments[i*BATCH_SIZE:(i+1)*BATCH_SIZE]
+                        stacked_audio = np.stack(stacked_audio)
+                        stacked_audio = jnp.asarray(stacked_audio)
+                        padding_size = BATCH_SIZE - stacked_audio.shape[0]
+                        padded_stacked_audio = jnp.pad(stacked_audio,((0,padding_size),(0,0),(0,0)))
+                        pred_ids = p_generate(params, padded_stacked_audio,detected_language)
+                        pred_ids = pred_ids[:BATCH_SIZE - padding_size]
+                        if pred_ids_result is None:
+                            pred_ids_result = pred_ids
                         else:
-                            logits_add = outputs.logits
-                            logits += logits_add
-                        i += 1
-                mask = jnp.ones(logits.shape[-1], dtype=jnp.bool)
-                mask = mask.at[jnp.array(all_language_tokens())].set(False)
-                logits = logits.at[:,:, mask].set(-jnp.inf)
-                language_tokens = jnp.argmax(logits,axis=-1)
-                print(processor.decode(language_tokens[0,0]))
-                breakpoint()
-
-               
-                stacked_audio = np.stack(stacked_audio)
-                stacked_audio = jnp.asarray(stacked_audio)
-
-
-                pred_ids = p_generate(params, stacked_audio)
-                # post-process: convert tokens ids to text string
-                transcription = processor.batch_decode(pred_ids, skip_special_tokens=True)
-                breakpoint()
-    runtime = time.time() - start
+                            pred_ids_result = np.concatenate([pred_ids_result,pred_ids],axis=0)
+                    transcriptions = processor.batch_decode(pred_ids_result, skip_special_tokens=True)
+                    for (file_name, start_time, end_time), transcription in zip(segments_info, transcriptions):
+                            csv_writer.writerow([file_name, start_time, end_time, detected_language, transcription])
+                    runtime = time.time() - count_start_time
+                    print(f"耗时: {runtime:.06}")
     print(f"{runtime:.06}")
 
 
