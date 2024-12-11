@@ -264,20 +264,23 @@ def main():
                         audio_segments.append(processed_segment.input_features[0])
                         segments_info.append((file, timestamp["start"], timestamp["end"]))
                         if i < 4:
-                            encoder_outputs = model.encode(input_features=processed_segment.input_features,params=params)
-                            decoder_start_token_id = model.config.decoder_start_token_id
-                            decoder_input_ids = jnp.ones((processed_segment.input_features.shape[0], 1), dtype="i4") * decoder_start_token_id
-                            outputs = model.decode(decoder_input_ids, encoder_outputs,params=params)
+                            def language_detect_wrap(params,input_features):
+                                encoder_outputs = model.encode(input_features=input_features,params=params)
+                                decoder_start_token_id = model.config.decoder_start_token_id
+                                decoder_input_ids = jnp.ones((input_features.shape[0], 1), dtype="i4") * decoder_start_token_id
+                                outputs = model.decode(decoder_input_ids, encoder_outputs,params=params)
+                                return outputs.logits
                             if logits is None:
-                                logits = outputs.logits
+                                logits = jax.jit(language_detect_wrap)(params,processed_segment.input_features)
                             else:
-                                logits_add = outputs.logits
+                                logits_add = jax.jit(language_detect_wrap)(params,processed_segment)
                                 logits += logits_add
                             i += 1
-                    mask = jnp.ones(logits.shape[-1], dtype=jnp.bool)
-                    mask = mask.at[jnp.array(all_language_tokens())].set(False)
-                    logits = logits.at[:,:, mask].set(-jnp.inf)
-                    language_tokens = jnp.argmax(logits,axis=-1)
+                    logits = np.asarray(logits)
+                    mask = np.ones(logits.shape[-1], dtype=np.bool)
+                    mask[np.array(all_language_tokens())] = False
+                    logits[:,:, mask] = -np.inf
+                    language_tokens = np.argmax(logits,axis=-1)
                     detected_language = processor.decode(language_tokens[0,0])
                     print(detected_language)
                     model_a, metadata = load_align_model(language_code=remove_symbols(detected_language))
@@ -286,11 +289,12 @@ def main():
                     for i in range(rounds):
                         stacked_audio = audio_segments[i*BATCH_SIZE:(i+1)*BATCH_SIZE]
                         stacked_audio = np.stack(stacked_audio)
-                        stacked_audio = jnp.asarray(stacked_audio)
                         padding_size = BATCH_SIZE - stacked_audio.shape[0]
-                        padded_stacked_audio = jnp.pad(stacked_audio,((0,padding_size),(0,0),(0,0)))
+                        padded_stacked_audio = np.pad(stacked_audio,((0,padding_size),(0,0),(0,0)))
+                        padded_stacked_audio = jnp.asarray(padded_stacked_audio)
                         pred_ids = p_generate(params, padded_stacked_audio,detected_language)
                         pred_ids = pred_ids[:BATCH_SIZE - padding_size]
+                        pred_ids = np.asarray(pred_ids)
                         if pred_ids_result is None:
                             pred_ids_result = pred_ids
                         else:
