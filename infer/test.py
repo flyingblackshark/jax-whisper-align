@@ -18,7 +18,15 @@ datasets.logging.set_verbosity(datasets.logging.CRITICAL)
 import csv
 cc.set_cache_dir("./jax_cache")
 #jax.config.update("jax_array", True)
-
+from vad import (
+    SpeechTimestampsMap,
+    VadOptions,
+    collect_chunks,
+    get_speech_timestamps,
+    merge_segments,
+)
+import re
+from align import load_align_model,align,SingleSegment
 LANGUAGES = {
     "en": "english",
     "zh": "chinese",
@@ -138,9 +146,14 @@ logical_axis_rules_dp = [
     ("channels", None),
 ]
 
+def remove_symbols(text):
+    # 使用正则表达式匹配 <|符号|> 并提取中间的内容
+    cleaned_text = re.sub(r"<\|([^|]+)\|>", r"\1", text)
+    return cleaned_text
 
 def main():
-    BATCH_SIZE = 128
+    jax.distributed.initialize()
+    BATCH_SIZE = 16
     # processors/tokenizers are the same for all models, so just load from tiny and preprocess once
     processor = WhisperProcessor.from_pretrained("openai/whisper-large-v3")
     model, params = FlaxWhisperForConditionalGeneration.from_pretrained(
@@ -213,9 +226,7 @@ def main():
     params = jax.device_put(params,jax.devices()[0])
     # This will auto-magically run in mesh context
     params = p_shard_params(freeze(params))
-    silereo_model = load_silero_vad()
 
-    
     supported_formats = ('.wav', '.mp3', '.flac', '.ogg', '.m4a')
     output_csv = "transcriptions.csv"
     with open(output_csv, mode='w', newline='', encoding='utf-8') as csvfile:
@@ -233,18 +244,20 @@ def main():
                     audio_data, sample_rate = librosa.load(file_path, sr=16000)  # sr=None 保持原始采样率
                     print(f"Successfully loaded {file_path}")
                     print(f"Sample Rate: {sample_rate}, Audio Data Length: {len(audio_data)}")
-                    speech_timestamps = get_speech_timestamps(
-                        audio_data,
-                        silereo_model,
-                        return_seconds=True,  # Return speech timestamps in seconds (default is samples)
+                    vad_parameters = VadOptions(
+                        max_speech_duration_s=30,
+                        min_silence_duration_ms=160,
                     )
+                    active_segments = get_speech_timestamps(audio_data, vad_parameters)
+                    clip_timestamps = merge_segments(active_segments, vad_parameters)
+                    
                     audio_segments = []
                     segments_info = []
                     logits = None
                     i = 0
-                    for timestamp in speech_timestamps:
-                        start, end = int(timestamp["start"] * sample_rate), int(timestamp["end"] * sample_rate)
-                        segment = audio_data[start:end]
+                    for timestamp in clip_timestamps:
+                        #start, end = int(timestamp["start"] * sample_rate), int(timestamp["end"] * sample_rate)
+                        segment = audio_data[timestamp["start"]:timestamp["end"]]
                         
                         # 对片段进行预处理
                         processed_segment = processor(segment, sampling_rate=16000, return_tensors="np")
@@ -267,7 +280,7 @@ def main():
                     language_tokens = jnp.argmax(logits,axis=-1)
                     detected_language = processor.decode(language_tokens[0,0])
                     print(detected_language)
-
+                    model_a, metadata = load_align_model(language_code=remove_symbols(detected_language))
                     rounds = (len(audio_segments)-1) // BATCH_SIZE + 1
                     pred_ids_result = None
                     for i in range(rounds):
@@ -283,8 +296,17 @@ def main():
                         else:
                             pred_ids_result = np.concatenate([pred_ids_result,pred_ids],axis=0)
                     transcriptions = processor.batch_decode(pred_ids_result, skip_special_tokens=True)
-                    for (file_name, start_time, end_time), transcription in zip(segments_info, transcriptions):
-                            csv_writer.writerow([file_name, start_time, end_time, detected_language, transcription])
+                    
+                    segs = []
+                    for (_ ,start_time, end_time), transcription in zip(segments_info, transcriptions):
+                        segs.append(SingleSegment(start=start_time/16000.,end=end_time/16000.,text=transcription))
+                            #csv_writer.writerow([file_name, start_time, end_time, detected_language, transcription])
+                    result = align(segs, model_a, metadata, audio_data, return_char_alignments=False)
+                    for segment in result["segments"]:
+                        start_time = segment["start"]
+                        end_time = segment["end"]
+                        transcript = segment["text"]
+                        csv_writer.writerow([file, start_time, end_time, transcript, detected_language])
                     runtime = time.time() - count_start_time
                     print(f"耗时: {runtime:.06}")
     print(f"{runtime:.06}")
