@@ -17,7 +17,6 @@ import jax.numpy as jnp
 from jax.sharding import Mesh, NamedSharding, PartitionSpec
 
 from typing import TypedDict, Optional, List
-from scipy.special import softmax
 
 class SingleWordSegment(TypedDict):
     """
@@ -155,6 +154,7 @@ def load_align_model(language_code, model_name=None, model_dir=None):
     #     try:
     processor = Wav2Vec2Processor.from_pretrained(model_name)
     align_model = FlaxWav2Vec2ForCTC.from_pretrained(model_name)
+    align_model.params = align_model.to_bf16(align_model.params)
         # except Exception as e:
         #     print(e)
         #     print(f"Error loading model from huggingface, check https://huggingface.co/models for finetuned wav2vec2.0 models")
@@ -263,8 +263,10 @@ def align(
         ],axis=0)
     def slice_emissions(emissions, lengths):
         """Slice emissions to match the original lengths of waveforms."""
-        return [emissions[i, :(l - 80)//320,:] for i, l in enumerate(lengths)]
-    BATCH_SIZE = 4
+        return [np.asarray(emissions[i, :(l - 80)//320,:]) for i, l in enumerate(lengths)]
+    BATCH_SIZE = 16
+    import time
+    CTC_time = time.time()
     for sdx, segment in enumerate(transcript):
         
         t1 = segment["start"]
@@ -293,11 +295,12 @@ def align(
             else:
                 raise NotImplementedError(f"Align model of type {model_type} not supported.")
             emissions_batch = emissions_batch[:BATCH_SIZE-B_padding]
-            emissions_batch = np.asarray(emissions_batch)
+            #emissions_batch = np.asarray(emissions_batch)
             pre_emissions.extend(slice_emissions(emissions_batch, lengths))
             pre_waveform_segments = []
             pre_segment_lengths = []
-
+    count_CTC_time = time.time()
+    print(f"CTC耗时:{count_CTC_time-CTC_time}")
 
     for sdx, segment in enumerate(transcript):
         

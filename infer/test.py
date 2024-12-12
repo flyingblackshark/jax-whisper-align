@@ -1,7 +1,5 @@
 import argparse
 import time
-
-import datasets
 import jax
 import jax.numpy as jnp
 from flax.core.frozen_dict import freeze
@@ -12,7 +10,7 @@ import numpy as np
 from whisper_jax import FlaxWhisperForConditionalGeneration, InferenceState, PjitPartitioner
 import os
 import librosa
-from silero_vad import load_silero_vad, read_audio, get_speech_timestamps
+#from silero_vad import load_silero_vad, read_audio, get_speech_timestamps
 from jax.experimental import mesh_utils
 import csv
 from jax.sharding import Mesh, NamedSharding, PartitionSpec
@@ -279,6 +277,7 @@ def main():
                         processed_segment = processor(segment, sampling_rate=16000, return_tensors="np")
                         audio_segments.append(processed_segment.input_features[0])
                         segments_info.append((file, timestamp["start"], timestamp["end"]))
+                    count_segments = len(clip_timestamps)
                     count_vad_time = time.time()
                     def language_detect_wrap(params,input_features):
                         encoder_outputs = model.encode(input_features=input_features,params=params)
@@ -336,7 +335,7 @@ def main():
                         transcript = segment["text"]
                         csv_writer.writerow([file, start_time, end_time, transcript, detected_language])
                     runtime = time.time() 
-                    print(f"VAD切割耗时:{(count_vad_time- count_start_time):.06} 检测语言耗时:{(count_detect_language_time - count_vad_time):.06} 转录耗时:{(count_transcribe_time - count_detect_language_time):.06} 对齐耗时:{(count_align_time - count_transcribe_time):.06} 总耗时: {(runtime- count_start_time):.06} 音频长度:{(len(audio_data)/16000):.06} sec")
+                    print(f"VAD切割耗时:{(count_vad_time- count_start_time):.06} 检测语言耗时:{(count_detect_language_time - count_vad_time):.06} 转录耗时:{(count_transcribe_time - count_detect_language_time):.06} 对齐耗时:{(count_align_time - count_transcribe_time):.06} 总耗时: {(runtime- count_start_time):.06} 音频长度:{(len(audio_data)/16000):.06} sec VAD切割片段个数:{count_segments}")
     print(f"{runtime:.06}")
 
 
