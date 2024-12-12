@@ -77,7 +77,7 @@ class AlignedTranscriptionResult(TypedDict):
 import nltk
 from nltk.tokenize.punkt import PunktSentenceTokenizer, PunktParameters
 
-SAMPLE_RATE = 16000
+#SAMPLE_RATE = 16000
 PUNKT_ABBREVIATIONS = ['dr', 'vs', 'mr', 'mrs', 'prof']
 
 LANGUAGES_WITHOUT_SPACES = ["ja", "zh"]
@@ -191,7 +191,7 @@ def align(
     if len(audio.shape) == 1:
         audio = audio[np.newaxis,:]
     
-    MAX_DURATION = audio.shape[1] / SAMPLE_RATE
+    MAX_DURATION = audio.shape[1] #/ SAMPLE_RATE
 
     model_dictionary = align_model_metadata["dictionary"]
     model_lang = align_model_metadata["language"]
@@ -272,11 +272,12 @@ def align(
         t1 = segment["start"]
         t2 = segment["end"]
 
-        f1 = int(t1 * SAMPLE_RATE)
-        f2 = int(t2 * SAMPLE_RATE)
+        f1 = t1#int(t1 * SAMPLE_RATE)
+        f2 = t2#int(t2 * SAMPLE_RATE)
 
         waveform_segment = audio[:, f1:f2]
-        MAX_LENGTH = 30 * SAMPLE_RATE
+        SAMPLE_RATE = 16000
+        MAX_LENGTH = 32 * SAMPLE_RATE
         pre_waveform_segments.append(waveform_segment)
         pre_segment_lengths.append(waveform_segment.shape[-1])
         if len(pre_waveform_segments) == BATCH_SIZE or sdx == len(transcript) - 1:

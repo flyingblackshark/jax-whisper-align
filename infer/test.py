@@ -326,12 +326,12 @@ def main():
                     model_a, metadata = get_align_model_with_cache(language_code=remove_symbols(detected_language))
                     segs = []
                     for (_ ,start_time, end_time), transcription in zip(segments_info, transcriptions):
-                        segs.append(SingleSegment(start=start_time/16000.,end=end_time/16000.,text=transcription))
+                        segs.append(SingleSegment(start=start_time,end=end_time,text=transcription))
                     result = align(segs, model_a, metadata, audio_data, mesh, return_char_alignments=False)
                     count_align_time = time.time()
                     for segment in result["segments"]:
-                        start_time = segment["start"]
-                        end_time = segment["end"]
+                        start_time = segment["start"] / 16000
+                        end_time = segment["end"] / 16000
                         transcript = segment["text"]
                         csv_writer.writerow([file, start_time, end_time, transcript, detected_language])
                     runtime = time.time() 
