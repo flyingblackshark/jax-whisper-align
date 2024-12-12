@@ -83,13 +83,13 @@ PUNKT_ABBREVIATIONS = ['dr', 'vs', 'mr', 'mrs', 'prof']
 
 LANGUAGES_WITHOUT_SPACES = ["ja", "zh"]
 
-DEFAULT_ALIGN_MODELS_TORCH = {
-    "en": "WAV2VEC2_ASR_BASE_960H",
-    "fr": "VOXPOPULI_ASR_BASE_10K_FR",
-    "de": "VOXPOPULI_ASR_BASE_10K_DE",
-    "es": "VOXPOPULI_ASR_BASE_10K_ES",
-    "it": "VOXPOPULI_ASR_BASE_10K_IT",
-}
+# DEFAULT_ALIGN_MODELS_TORCH = {
+#     "en": "WAV2VEC2_ASR_BASE_960H",
+#     "fr": "VOXPOPULI_ASR_BASE_10K_FR",
+#     "de": "VOXPOPULI_ASR_BASE_10K_DE",
+#     "es": "VOXPOPULI_ASR_BASE_10K_ES",
+#     "it": "VOXPOPULI_ASR_BASE_10K_IT",
+# }
 
 DEFAULT_ALIGN_MODELS_HF = {
     "en": "jonatasgrosman/wav2vec2-large-xlsr-53-english",
@@ -122,6 +122,9 @@ DEFAULT_ALIGN_MODELS_HF = {
     "sl": "anton-l/wav2vec2-large-xlsr-53-slovenian",
     "hr": "classla/wav2vec2-xls-r-parlaspeech-hr",
     "it": "jonatasgrosman/wav2vec2-large-xlsr-53-italian",
+    "fr": "jonatasgrosman/wav2vec2-large-xlsr-53-french",
+    "de": "jonatasgrosman/wav2vec2-large-xlsr-53-german",
+    "es": "jonatasgrosman/wav2vec2-large-xlsr-53-spanish",
 }
 
 def interpolate_nans(x, method='nearest'):

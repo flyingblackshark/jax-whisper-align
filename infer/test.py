@@ -145,6 +145,18 @@ logical_axis_rules_dp = [
     ("num_mel", None),
     ("channels", None),
 ]
+global_align_model_cache = {}
+
+def get_align_model_with_cache(language_code):
+    """获取对齐模型，如果已经加载过则直接从缓存中返回"""
+    if language_code in global_align_model_cache:
+        print(f"Using cached align model for language: {language_code}")
+        return global_align_model_cache[language_code]
+    
+    print(f"Loading align model for language: {language_code}")
+    model_a, metadata = load_align_model(language_code=language_code)
+    global_align_model_cache[language_code] = (model_a, metadata)
+    return model_a, metadata
 
 def remove_symbols(text):
     # 使用正则表达式匹配 <|符号|> 并提取中间的内容
@@ -154,7 +166,7 @@ def remove_symbols(text):
 def main():
     jax.distributed.initialize()
     BATCH_SIZE = 16
-    LANGUAGE_DETECT_BATCH_SIZE = 4
+    LANGUAGE_DETECT_BATCH_SIZE = 8
     device_mesh = mesh_utils.create_device_mesh((jax.device_count(), 1))
     mesh = Mesh(device_mesh, axis_names=("data", "model")) 
     # processors/tokenizers are the same for all models, so just load from tiny and preprocess once
@@ -246,7 +258,7 @@ def main():
                     # 使用 librosa 加载音频文件
                     audio_data, sample_rate = librosa.load(file_path, sr=16000)  # sr=None 保持原始采样率
                     print(f"Successfully loaded {file_path}")
-                    print(f"Sample Rate: {sample_rate}, Audio Data Length: {len(audio_data)}")
+                    #print(f"Sample Rate: {sample_rate}, Audio Data Length: {len(audio_data)}")
                     vad_parameters = VadOptions(
                         max_speech_duration_s=30,
                         min_silence_duration_ms=160,
@@ -258,7 +270,7 @@ def main():
                     segments_info = []
                     logits = None
                     i = 0
-
+                    
                     for timestamp in clip_timestamps:
                         #start, end = int(timestamp["start"] * sample_rate), int(timestamp["end"] * sample_rate)
                         segment = audio_data[timestamp["start"]:timestamp["end"]]
@@ -267,6 +279,7 @@ def main():
                         processed_segment = processor(segment, sampling_rate=16000, return_tensors="np")
                         audio_segments.append(processed_segment.input_features[0])
                         segments_info.append((file, timestamp["start"], timestamp["end"]))
+                    count_vad_time = time.time()
                     def language_detect_wrap(params,input_features):
                         encoder_outputs = model.encode(input_features=input_features,params=params)
                         decoder_start_token_id = model.config.decoder_start_token_id
@@ -281,16 +294,18 @@ def main():
                     if logits is None:
                         logits = jitted_language_detect_func(params,padded_language_detect_segments)
                     else:
-                        logits_add = jitted_language_detect_func(params,padded_language_detect_segments)
-                        logits += logits_add
-                    logits = jnp.sum(logits,axis=0,keepdims=True)
-                    mask = jnp.ones(logits.shape[-1], dtype=jnp.bool)
-                    mask = mask.at[jnp.array(all_language_tokens())].set(False)
-                    logits = logits.at[:,:, mask].set(-jnp.inf)
-                    language_tokens = jnp.argmax(logits,axis=-1)
+                        logits += jitted_language_detect_func(params,padded_language_detect_segments)
+                    def language_mask_wrap(logits):
+                        logits = jnp.sum(logits,axis=0,keepdims=True)
+                        mask = jnp.ones(logits.shape[-1], dtype=jnp.bool)
+                        mask = mask.at[jnp.array(all_language_tokens())].set(False)
+                        logits = jnp.where(mask,-jnp.inf,logits)
+                        language_tokens = jnp.argmax(logits,axis=-1)
+                        return language_tokens
+                    language_tokens = jax.jit(language_mask_wrap)(logits)
                     detected_language = processor.decode(language_tokens[0,0])
-                    print(detected_language)
-                    model_a, metadata = load_align_model(language_code=remove_symbols(detected_language))
+                    count_detect_language_time = time.time()
+                    
                     rounds = (len(audio_segments)-1) // BATCH_SIZE + 1
                     pred_ids_result = None
                     for i in range(rounds):
@@ -307,19 +322,21 @@ def main():
                         else:
                             pred_ids_result = np.concatenate([pred_ids_result,pred_ids],axis=0)
                     transcriptions = processor.batch_decode(pred_ids_result, skip_special_tokens=True)
-                    
+
+                    count_transcribe_time = time.time()
+                    model_a, metadata = get_align_model_with_cache(language_code=remove_symbols(detected_language))
                     segs = []
                     for (_ ,start_time, end_time), transcription in zip(segments_info, transcriptions):
                         segs.append(SingleSegment(start=start_time/16000.,end=end_time/16000.,text=transcription))
-                            #csv_writer.writerow([file_name, start_time, end_time, detected_language, transcription])
                     result = align(segs, model_a, metadata, audio_data, mesh, return_char_alignments=False)
+                    count_align_time = time.time()
                     for segment in result["segments"]:
                         start_time = segment["start"]
                         end_time = segment["end"]
                         transcript = segment["text"]
                         csv_writer.writerow([file, start_time, end_time, transcript, detected_language])
-                    runtime = time.time() - count_start_time
-                    print(f"耗时: {runtime:.06}")
+                    runtime = time.time() 
+                    print(f"VAD切割耗时:{(count_vad_time- count_start_time):.06} 检测语言耗时:{(count_detect_language_time - count_vad_time):.06} 转录耗时:{(count_transcribe_time - count_detect_language_time):.06} 对齐耗时:{(count_align_time - count_transcribe_time):.06} 总耗时: {(runtime- count_start_time):.06} 音频长度:{(len(audio_data)/16000):.06} sec")
     print(f"{runtime:.06}")
 
 
