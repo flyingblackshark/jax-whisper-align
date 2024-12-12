@@ -4,7 +4,6 @@ import time
 import datasets
 import jax
 import jax.numpy as jnp
-from datasets import concatenate_datasets, load_dataset
 from flax.core.frozen_dict import freeze
 from jax.experimental.compilation_cache import compilation_cache as cc
 from jax.sharding import PartitionSpec as P
@@ -14,8 +13,9 @@ from whisper_jax import FlaxWhisperForConditionalGeneration, InferenceState, Pji
 import os
 import librosa
 from silero_vad import load_silero_vad, read_audio, get_speech_timestamps
-datasets.logging.set_verbosity(datasets.logging.CRITICAL)
+from jax.experimental import mesh_utils
 import csv
+from jax.sharding import Mesh, NamedSharding, PartitionSpec
 cc.set_cache_dir("./jax_cache")
 #jax.config.update("jax_array", True)
 from vad import (
@@ -154,6 +154,9 @@ def remove_symbols(text):
 def main():
     jax.distributed.initialize()
     BATCH_SIZE = 16
+    LANGUAGE_DETECT_BATCH_SIZE = 4
+    device_mesh = mesh_utils.create_device_mesh((jax.device_count(), 1))
+    mesh = Mesh(device_mesh, axis_names=("data", "model")) 
     # processors/tokenizers are the same for all models, so just load from tiny and preprocess once
     processor = WhisperProcessor.from_pretrained("openai/whisper-large-v3")
     model, params = FlaxWhisperForConditionalGeneration.from_pretrained(
@@ -255,6 +258,7 @@ def main():
                     segments_info = []
                     logits = None
                     i = 0
+
                     for timestamp in clip_timestamps:
                         #start, end = int(timestamp["start"] * sample_rate), int(timestamp["end"] * sample_rate)
                         segment = audio_data[timestamp["start"]:timestamp["end"]]
@@ -263,24 +267,27 @@ def main():
                         processed_segment = processor(segment, sampling_rate=16000, return_tensors="np")
                         audio_segments.append(processed_segment.input_features[0])
                         segments_info.append((file, timestamp["start"], timestamp["end"]))
-                        if i < 4:
-                            def language_detect_wrap(params,input_features):
-                                encoder_outputs = model.encode(input_features=input_features,params=params)
-                                decoder_start_token_id = model.config.decoder_start_token_id
-                                decoder_input_ids = jnp.ones((input_features.shape[0], 1), dtype="i4") * decoder_start_token_id
-                                outputs = model.decode(decoder_input_ids, encoder_outputs,params=params)
-                                return outputs.logits
-                            if logits is None:
-                                logits = jax.jit(language_detect_wrap)(params,processed_segment.input_features)
-                            else:
-                                logits_add = jax.jit(language_detect_wrap)(params,processed_segment)
-                                logits += logits_add
-                            i += 1
-                    logits = np.asarray(logits)
-                    mask = np.ones(logits.shape[-1], dtype=np.bool)
-                    mask[np.array(all_language_tokens())] = False
-                    logits[:,:, mask] = -np.inf
-                    language_tokens = np.argmax(logits,axis=-1)
+                    def language_detect_wrap(params,input_features):
+                        encoder_outputs = model.encode(input_features=input_features,params=params)
+                        decoder_start_token_id = model.config.decoder_start_token_id
+                        decoder_input_ids = jnp.ones((input_features.shape[0], 1), dtype="i4") * decoder_start_token_id
+                        outputs = model.decode(decoder_input_ids, encoder_outputs,params=params)
+                        return outputs.logits
+                    x_sharding = NamedSharding(mesh,PartitionSpec("data"))
+                    jitted_language_detect_func = jax.jit(language_detect_wrap,in_shardings=(None,x_sharding),out_shardings=x_sharding)
+                    language_detect_segments = jnp.stack(audio_segments[:LANGUAGE_DETECT_BATCH_SIZE],axis=0)
+                    LD_B_padding = LANGUAGE_DETECT_BATCH_SIZE - language_detect_segments.shape[0]
+                    padded_language_detect_segments = jnp.pad(language_detect_segments,((0,LD_B_padding),(0,0),(0,0)))
+                    if logits is None:
+                        logits = jitted_language_detect_func(params,padded_language_detect_segments)
+                    else:
+                        logits_add = jitted_language_detect_func(params,padded_language_detect_segments)
+                        logits += logits_add
+                    logits = jnp.sum(logits,axis=0,keepdims=True)
+                    mask = jnp.ones(logits.shape[-1], dtype=jnp.bool)
+                    mask = mask.at[jnp.array(all_language_tokens())].set(False)
+                    logits = logits.at[:,:, mask].set(-jnp.inf)
+                    language_tokens = jnp.argmax(logits,axis=-1)
                     detected_language = processor.decode(language_tokens[0,0])
                     print(detected_language)
                     model_a, metadata = load_align_model(language_code=remove_symbols(detected_language))
@@ -305,7 +312,7 @@ def main():
                     for (_ ,start_time, end_time), transcription in zip(segments_info, transcriptions):
                         segs.append(SingleSegment(start=start_time/16000.,end=end_time/16000.,text=transcription))
                             #csv_writer.writerow([file_name, start_time, end_time, detected_language, transcription])
-                    result = align(segs, model_a, metadata, audio_data, return_char_alignments=False)
+                    result = align(segs, model_a, metadata, audio_data, mesh, return_char_alignments=False)
                     for segment in result["segments"]:
                         start_time = segment["start"]
                         end_time = segment["end"]

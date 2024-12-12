@@ -121,6 +121,7 @@ DEFAULT_ALIGN_MODELS_HF = {
     "sk": "comodoro/wav2vec2-xls-r-300m-sk-cv8",
     "sl": "anton-l/wav2vec2-large-xlsr-53-slovenian",
     "hr": "classla/wav2vec2-xls-r-parlaspeech-hr",
+    "it": "jonatasgrosman/wav2vec2-large-xlsr-53-italian",
 }
 
 def interpolate_nans(x, method='nearest'):
@@ -170,7 +171,7 @@ def align(
     model,
     align_model_metadata: dict,
     audio: Union[str, np.ndarray, np.ndarray],
-    #device: str,
+    mesh,
     interpolate_method: str = "nearest",
     return_char_alignments: bool = False,
     print_progress: bool = False,
@@ -245,8 +246,8 @@ def align(
         segment["sentence_spans"] = sentence_spans
     
     aligned_segments: List[SingleAlignedSegment] = []
-    device_mesh = mesh_utils.create_device_mesh((4, 1))
-    mesh = Mesh(device_mesh, axis_names=("data", "model")) 
+    
+    
     x_sharding = NamedSharding(mesh,PartitionSpec("data"))
     # 2. Get prediction matrix from alignment model & align
     pre_emissions = []
