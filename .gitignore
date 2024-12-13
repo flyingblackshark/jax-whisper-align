@@ -175,3 +175,5 @@ wandb
 jax_cache/
 
 transcriptions.csv
+*.csv
+*.srt
