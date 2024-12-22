@@ -89,4 +89,5 @@ if __name__ == "__main__":
         )
 
     # 运行 Gradio 界面
-    demo.launch(server_name='0.0.0.0',server_port=80)
+    demo.queue()
+    demo.launch(server_name='0.0.0.0')
