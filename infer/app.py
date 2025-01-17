@@ -53,9 +53,10 @@ def download_file(file_path):
     # 读取文件内容以提供下载
     with open(file_path, "rb") as file:
         return file.read()
-    
+device = "tpu"
 if __name__ == "__main__":
-    jax.distributed.initialize()
+    if device.lower() == "tpu":
+        jax.distributed.initialize()
     # 创建 Gradio 界面
     with gr.Blocks() as demo:
         gr.Markdown("## 语音转文本工具")

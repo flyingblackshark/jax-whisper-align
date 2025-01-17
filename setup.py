@@ -27,17 +27,17 @@ _deps = [
     "cached-property",
 ]
 
-_extras_dev_deps = [
-    "black~=23.1",
-    "isort>=5.5.4",
-    "ruff>=0.0.241,<=0.0.259",
-]
+# _extras_dev_deps = [
+#     "black",
+#     "isort",
+#     "ruff",
+# ]
 
-_extras_endpoint_deps = [
-    "gradio>=4.9.1",
-    "requests>=2.28.2",
-    "yt-dlp>=2023.3.4",
-]
+# _extras_endpoint_deps = [
+#     "gradio",
+#     "requests",
+#     "yt-dlp",
+# ]
 
 
 here = os.path.abspath(os.path.dirname(__file__))
@@ -62,8 +62,8 @@ setup(
     long_description_content_type="text/markdown",
     packages=find_packages(),
     install_requires=_deps,
-    extras_require={
-        "dev": [_extras_dev_deps],
-        "endpoint": [_extras_endpoint_deps],
-    },
+    # extras_require={
+    #     "dev": [_extras_dev_deps],
+    #     "endpoint": [_extras_endpoint_deps],
+    # },
 )
