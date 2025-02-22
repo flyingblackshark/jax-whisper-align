@@ -230,19 +230,19 @@ def process_audio(file_path):
     param_axes = jax.eval_shape(init_fn)["params_axes"]
 
     # Create InferenceState, since the partitioner expects it
-    state = InferenceState(
-        step=jnp.array(0),
-        params=freeze(model.params_shape_tree),
-        params_axes=freeze(param_axes),
-        flax_mutables=None,
-        flax_mutables_axes=param_axes,
-    )
+    # state = InferenceState(
+    #     step=jnp.array(0),
+    #     params=freeze(model.params_shape_tree),
+    #     params_axes=freeze(param_axes),
+    #     flax_mutables=None,
+    #     flax_mutables_axes=param_axes,
+    # )
 
-    partitioner = PjitPartitioner(
-        num_partitions=1,
-        #model_parallel_submesh=(2,2,1,1),
-        logical_axis_rules=logical_axis_rules_dp,
-    )
+    # partitioner = PjitPartitioner(
+    #     num_partitions=1,
+    #     #model_parallel_submesh=(2,2,1,1),
+    #     logical_axis_rules=logical_axis_rules_dp,
+    # )
 
     #mesh_axes = partitioner.get_mesh_axes(state)
     #params_spec = mesh_axes.params
@@ -252,13 +252,13 @@ def process_audio(file_path):
     def generate(params, input_features,language):
         output_ids = model.generate(input_features, params=params,language=language).sequences
         return output_ids
-
-    p_generate = partitioner.partition(
-        generate,
-        in_axis_resources=(P(None), P("data")),
-        out_axis_resources=P("data"),
-        static_argnums=(2,)
-    )
+    jitted_generate = jax.jit(generate,in_shardings=(replicate_sharding,x_sharding),out_shardings=x_sharding)
+    # p_generate = partitioner.partition(
+    #     generate,
+    #     in_axis_resources=(P(None), P("data")),
+    #     out_axis_resources=P("data"),
+    #     static_argnums=(2,)
+    # )
     params = model.to_bf16(params)
     #params = jax.device_put(params,jax.devices()[0])
     # This will auto-magically run in mesh context
@@ -329,7 +329,7 @@ def process_audio(file_path):
         padding_size = BATCH_SIZE - stacked_audio.shape[0]
         padded_stacked_audio = np.pad(stacked_audio,((0,padding_size),(0,0),(0,0)))
         padded_stacked_audio = jnp.asarray(padded_stacked_audio)
-        pred_ids = p_generate(params, padded_stacked_audio,detected_language)
+        pred_ids = jitted_generate(params, padded_stacked_audio,detected_language)
         pred_ids = pred_ids[:BATCH_SIZE - padding_size]
         pred_ids = np.asarray(pred_ids)
         if pred_ids_result is None:
