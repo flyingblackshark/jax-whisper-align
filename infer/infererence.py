@@ -250,11 +250,11 @@ def process_audio(file_path):
     #p_shard_params = partitioner.partition(model.to_bf16, (params_spec,), params_spec)
     replicate_sharding = NamedSharding(mesh,PartitionSpec(None))
     x_sharding = NamedSharding(mesh,PartitionSpec("data"))
-    
+
     def generate(params, input_features,language):
         output_ids = model.generate(input_features, params=params,language=language).sequences
         return output_ids
-    jitted_generate = jax.jit(generate,in_shardings=(replicate_sharding,x_sharding),out_shardings=x_sharding)
+    jitted_generate = jax.jit(generate,in_shardings=(replicate_sharding,x_sharding),out_shardings=x_sharding,static_argnums=(2,))
     # p_generate = partitioner.partition(
     #     generate,
     #     in_axis_resources=(P(None), P("data")),
