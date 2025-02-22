@@ -2,3 +2,5 @@ gradio
 librosa
 nltk
 onnxruntime
+flax
+transformers
