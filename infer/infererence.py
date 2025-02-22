@@ -259,6 +259,7 @@ def process_audio(file_path):
         out_axis_resources=P("data"),
         static_argnums=(2,)
     )
+    params = model.to_bf16(params)
     #params = jax.device_put(params,jax.devices()[0])
     # This will auto-magically run in mesh context
     #params = p_shard_params(freeze(params))
