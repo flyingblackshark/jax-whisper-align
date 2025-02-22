@@ -227,7 +227,7 @@ def process_audio(file_path):
         return init_params
 
     # Axis names metadata
-    param_axes = jax.eval_shape(init_fn)["params_axes"]
+    #param_axes = jax.eval_shape(init_fn)["params_axes"]
 
     # Create InferenceState, since the partitioner expects it
     # state = InferenceState(
