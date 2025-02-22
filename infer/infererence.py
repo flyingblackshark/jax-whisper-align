@@ -203,28 +203,28 @@ def process_audio(file_path):
             if token.strip("<|>") in LANGUAGES:
                 result.append(token_id)
         return tuple(result)
-    def init_fn():
-        input_shape = (1, 128, 3000)
+    # def init_fn():
+    #     input_shape = (1, 128, 3000)
 
-        input_features = jnp.zeros(input_shape, dtype="f4")
-        input_features = input_features.at[(..., -1)].set(model.config.eos_token_id)
+    #     input_features = jnp.zeros(input_shape, dtype="f4")
+    #     input_features = input_features.at[(..., -1)].set(model.config.eos_token_id)
 
-        decoder_input_ids = jnp.zeros((input_shape[0], 1), dtype="i4")
-        decoder_attention_mask = jnp.ones_like(decoder_input_ids)
+    #     decoder_input_ids = jnp.zeros((input_shape[0], 1), dtype="i4")
+    #     decoder_attention_mask = jnp.ones_like(decoder_input_ids)
 
-        batch_size, sequence_length = decoder_input_ids.shape
-        decoder_position_ids = jnp.broadcast_to(jnp.arange(sequence_length)[None, :], (batch_size, sequence_length))
+    #     batch_size, sequence_length = decoder_input_ids.shape
+    #     decoder_position_ids = jnp.broadcast_to(jnp.arange(sequence_length)[None, :], (batch_size, sequence_length))
 
-        rng = jax.random.PRNGKey(0)
-        init_params = model.module.init(
-            rng,
-            input_features=input_features,
-            decoder_input_ids=decoder_input_ids,
-            decoder_attention_mask=decoder_attention_mask,
-            decoder_position_ids=decoder_position_ids,
-            return_dict=False,
-        )
-        return init_params
+    #     rng = jax.random.PRNGKey(0)
+    #     init_params = model.module.init(
+    #         rng,
+    #         input_features=input_features,
+    #         decoder_input_ids=decoder_input_ids,
+    #         decoder_attention_mask=decoder_attention_mask,
+    #         decoder_position_ids=decoder_position_ids,
+    #         return_dict=False,
+    #     )
+    #     return init_params
 
     # Axis names metadata
     #param_axes = jax.eval_shape(init_fn)["params_axes"]
@@ -248,7 +248,7 @@ def process_audio(file_path):
     #params_spec = mesh_axes.params
 
     #p_shard_params = partitioner.partition(model.to_bf16, (params_spec,), params_spec)
-
+    replicate_sharding = NamedSharding(mesh,PartitionSpec(None))
     def generate(params, input_features,language):
         output_ids = model.generate(input_features, params=params,language=language).sequences
         return output_ids
@@ -300,7 +300,7 @@ def process_audio(file_path):
         outputs = model.decode(decoder_input_ids, encoder_outputs,params=params)
         return outputs.logits
     x_sharding = NamedSharding(mesh,PartitionSpec("data"))
-    replicate_sharding = NamedSharding(mesh,PartitionSpec(None))
+    
     params = jax.device_put(params,replicate_sharding)
     jitted_language_detect_func = jax.jit(language_detect_wrap,in_shardings=(replicate_sharding,x_sharding),out_shardings=x_sharding)
     language_detect_segments = jnp.stack(audio_segments[:LANGUAGE_DETECT_BATCH_SIZE],axis=0)
