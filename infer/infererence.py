@@ -249,6 +249,8 @@ def process_audio(file_path):
 
     #p_shard_params = partitioner.partition(model.to_bf16, (params_spec,), params_spec)
     replicate_sharding = NamedSharding(mesh,PartitionSpec(None))
+    x_sharding = NamedSharding(mesh,PartitionSpec("data"))
+    
     def generate(params, input_features,language):
         output_ids = model.generate(input_features, params=params,language=language).sequences
         return output_ids
@@ -299,7 +301,7 @@ def process_audio(file_path):
         decoder_input_ids = jnp.ones((input_features.shape[0], 1), dtype="i4") * decoder_start_token_id
         outputs = model.decode(decoder_input_ids, encoder_outputs,params=params)
         return outputs.logits
-    x_sharding = NamedSharding(mesh,PartitionSpec("data"))
+    
     
     params = jax.device_put(params,replicate_sharding)
     jitted_language_detect_func = jax.jit(language_detect_wrap,in_shardings=(replicate_sharding,x_sharding),out_shardings=x_sharding)
