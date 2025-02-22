@@ -299,7 +299,9 @@ def process_audio(file_path):
         outputs = model.decode(decoder_input_ids, encoder_outputs,params=params)
         return outputs.logits
     x_sharding = NamedSharding(mesh,PartitionSpec("data"))
-    jitted_language_detect_func = jax.jit(language_detect_wrap,in_shardings=(None,x_sharding),out_shardings=x_sharding)
+    replicate_sharding = NamedSharding(mesh,PartitionSpec(None))
+    params = jax.device_put(params,replicate_sharding)
+    jitted_language_detect_func = jax.jit(language_detect_wrap,in_shardings=(replicate_sharding,x_sharding),out_shardings=x_sharding)
     language_detect_segments = jnp.stack(audio_segments[:LANGUAGE_DETECT_BATCH_SIZE],axis=0)
     LD_B_padding = LANGUAGE_DETECT_BATCH_SIZE - language_detect_segments.shape[0]
     padded_language_detect_segments = jnp.pad(language_detect_segments,((0,LD_B_padding),(0,0),(0,0)))
