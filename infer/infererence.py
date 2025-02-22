@@ -244,10 +244,10 @@ def process_audio(file_path):
         logical_axis_rules=logical_axis_rules_dp,
     )
 
-    mesh_axes = partitioner.get_mesh_axes(state)
-    params_spec = mesh_axes.params
+    #mesh_axes = partitioner.get_mesh_axes(state)
+    #params_spec = mesh_axes.params
 
-    p_shard_params = partitioner.partition(model.to_bf16, (params_spec,), params_spec)
+    #p_shard_params = partitioner.partition(model.to_bf16, (params_spec,), params_spec)
 
     def generate(params, input_features,language):
         output_ids = model.generate(input_features, params=params,language=language).sequences
@@ -255,13 +255,13 @@ def process_audio(file_path):
 
     p_generate = partitioner.partition(
         generate,
-        in_axis_resources=(params_spec, P("data")),
+        in_axis_resources=(P(None), P("data")),
         out_axis_resources=P("data"),
         static_argnums=(2,)
     )
-    params = jax.device_put(params,jax.devices()[0])
+    #params = jax.device_put(params,jax.devices()[0])
     # This will auto-magically run in mesh context
-    params = p_shard_params(freeze(params))
+    #params = p_shard_params(freeze(params))
 
     #supported_formats = ('.wav', '.mp3', '.flac', '.ogg', '.m4a')
     #output_csv = "transcriptions.csv"
