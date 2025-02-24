@@ -1,6 +1,7 @@
 import os
 from fastapi import FastAPI, File, UploadFile, Request
 from fastapi.responses import HTMLResponse, RedirectResponse,JSONResponse, StreamingResponse
+from gradio_client import Client, handle_file
 app = FastAPI()
 transcribe_client = Client("http://localhost:7860")
 
