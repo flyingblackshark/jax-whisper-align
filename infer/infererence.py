@@ -187,7 +187,7 @@ def process_audio(file_path):
         for token, token_id in zip(processor.tokenizer.all_special_tokens, processor.tokenizer.all_special_ids):
             if token.strip("<|>") in LANGUAGES:
                 result.append(token_id)
-        return tuple(result)
+        return result
     
     replicate_sharding = NamedSharding(mesh, PartitionSpec(None))
     x_sharding = NamedSharding(mesh, PartitionSpec("data"))
@@ -240,6 +240,7 @@ def process_audio(file_path):
         logits += jitted_language_detect_func(params, padded_language_detect_segments)
     def language_mask_wrap(logits):
         logits = np.sum(logits, axis=0, keepdims=True)
+        print(logits.shape[-1])
         mask = np.ones(logits.shape[-1], dtype=np.bool)
         mask[all_language_tokens()] = False
         logits = np.where(mask, -np.inf, logits)
