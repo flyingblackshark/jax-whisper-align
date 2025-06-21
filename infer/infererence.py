@@ -159,7 +159,7 @@ def remove_symbols(text):
 def process_audio(file_path):
     BATCH_SIZE = 16
     LANGUAGE_DETECT_BATCH_SIZE = 8
-    device_mesh = mesh_utils.create_device_mesh((jax.device_count()))
+    device_mesh = mesh_utils.create_device_mesh((jax.device_count(),))
     mesh = Mesh(device_mesh, axis_names=("data",))
     
     global whisper_model_processor_cache
