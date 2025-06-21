@@ -3,7 +3,7 @@ import time
 import jax
 import jax.numpy as jnp
 from flax.core.frozen_dict import freeze
-from jax.experimental.compilation_cache import compilation_cache as cc
+
 from jax.sharding import PartitionSpec as P
 from transformers import WhisperConfig, WhisperProcessor
 import numpy as np
@@ -14,8 +14,7 @@ import librosa
 from jax.experimental import mesh_utils
 import csv
 from jax.sharding import Mesh, NamedSharding, PartitionSpec
-cc.set_cache_dir("./jax_cache")
-#jax.config.update("jax_array", True)
+
 from vad import (
     SpeechTimestampsMap,
     VadOptions,

@@ -2,6 +2,7 @@ import gradio as gr
 import os
 import csv
 import jax
+import gradio as gr
 import infererence
 def transcribe_audio(audio_file):
 
@@ -16,23 +17,13 @@ def transcribe_audio(audio_file):
         for segment in segments
     ]
 
-    # 创建 CSV 文件
-    csv_file = "output.csv"
-    with open(csv_file, mode="w", encoding="utf-8", newline="") as f:
-        writer = csv.writer(f)
-        for segment in result:
-            start_time = segment["start"] / 16000
-            end_time = segment["end"] / 16000
-            transcript = segment["text"]
-            writer.writerow([os.path.basename(audio_file), start_time, end_time, transcript, detected_language])
-    srt_file = "output.srt"
-    with open(srt_file, mode="w", encoding="utf-8") as f:
-        for i, segment in enumerate(result, start=1):
-            f.write(f"{i}\n")
-            f.write(f"{format_time(segment['start']/ 16000)} --> {format_time(segment['end']/ 16000)}\n")
-            f.write(f"{segment['text']}\n\n")
+    srt_text = ""
+    for i, segment in enumerate(segments, start=1):
+        srt_text += f"{i}\n"
+        srt_text += f"{format_time(segment['start']/ 16000)} --> {format_time(segment['end']/ 16000)}\n"
+        srt_text += f"{segment['text']}\n\n"
 
-    return output_segments, csv_file, srt_file
+    return output_segments, srt_text
 
 def format_time(seconds):
     # 将秒转换为 SRT 格式的时间
@@ -61,24 +52,23 @@ if __name__ == "__main__":
             output_text = gr.Textbox(label="识别结果", lines=10)
 
         with gr.Row():
-            download_csv = gr.File(label="下载 CSV", interactive=False)
-            download_srt = gr.File(label="下载 SRT", interactive=False)
+            srt_output = gr.Textbox(label="SRT 格式", lines=10)
 
         def process_audio(audio_file):
             if not audio_file:
-                return "请上传音频文件。", None, None
+                return "请上传音频文件。", ""
 
-            segments, csv_file, srt_file = transcribe_audio(audio_file)
+            segments, srt_text = transcribe_audio(audio_file)
             text_output = "\n".join(
                 [f"[{segment['start']:.2f}-{segment['end']:.2f}]: {segment['text']}" for segment in segments]
             )
 
-            return text_output, csv_file, srt_file
+            return text_output, srt_text
 
         transcribe_button.click(
             fn=process_audio,
             inputs=audio_input,
-            outputs=[output_text, download_csv, download_srt]
+            outputs=[output_text, srt_output]
         )
 
     # 运行 Gradio 界面

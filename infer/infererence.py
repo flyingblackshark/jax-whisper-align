@@ -239,14 +239,14 @@ def process_audio(file_path):
     else:
         logits += jitted_language_detect_func(params, padded_language_detect_segments)
     def language_mask_wrap(logits):
-        logits = jnp.sum(logits, axis=0, keepdims=True)
-        mask = jnp.ones(logits.shape[-1], dtype=jnp.bool)
-        mask = mask.at[jnp.array(all_language_tokens())].set(False)
-        logits = jnp.where(mask, -jnp.inf, logits)
-        language_tokens = jnp.argmax(logits, axis=-1)
+        logits = np.sum(logits, axis=0, keepdims=True)
+        mask = np.ones(logits.shape[-1], dtype=np.bool)
+        mask[all_language_tokens()] = False
+        logits = np.where(mask, -np.inf, logits)
+        language_tokens = np.argmax(logits, axis=-1)
         return language_tokens
     
-    language_tokens = jax.jit(language_mask_wrap)(logits)
+    language_tokens = language_mask_wrap(np.asarray(logits))
     detected_language = processor.decode(language_tokens[0, 0])
 
     

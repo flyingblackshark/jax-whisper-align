@@ -6,17 +6,13 @@ import jax
 import jax.numpy as jnp
 from datasets import concatenate_datasets, load_dataset
 from flax.core.frozen_dict import freeze
-from jax.experimental.compilation_cache import compilation_cache as cc
+
 from jax.sharding import PartitionSpec as P
 from transformers import WhisperConfig, WhisperProcessor
 
 from whisper_jax import FlaxWhisperForConditionalGeneration, InferenceState, PjitPartitioner
-
-
 datasets.logging.set_verbosity(datasets.logging.CRITICAL)
 
-cc.set_cache_dir("./jax_cache")
-#jax.config.update("jax_array", True)
 
 
 def parse_args():

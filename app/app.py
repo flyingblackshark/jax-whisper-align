@@ -9,14 +9,9 @@ import gradio as gr
 import jax.numpy as jnp
 import numpy as np
 import yt_dlp as youtube_dl
-from jax.experimental.compilation_cache import compilation_cache as cc
 from transformers.models.whisper.tokenization_whisper import TO_LANGUAGE_CODE
 from transformers.pipelines.audio_utils import ffmpeg_read
-
 from whisper_jax import FlaxWhisperPipline
-
-
-cc.initialize_cache("./jax_cache")
 checkpoint = "openai/whisper-large-v3"
 
 BATCH_SIZE = 32
