@@ -4,16 +4,9 @@ import csv
 import jax
 import infererence
 def transcribe_audio(audio_file):
-    # 加载 Whisper 模型
 
+    segments,detected_language = infererence.process_audio(audio_file)
 
-    # 使用模型进行语音转文本
-    result,detected_language = infererence.process_audio(audio_file)
-
-    # 获取转录的文本分段
-    segments = result#["segments"]
-
-    # 转换为分段的输出格式
     output_segments = [
         {
             "start": segment["start"] / 16000,
@@ -53,10 +46,9 @@ def download_file(file_path):
     # 读取文件内容以提供下载
     with open(file_path, "rb") as file:
         return file.read()
-device = "tpu"
+
 if __name__ == "__main__":
-    if device.lower() == "tpu":
-        jax.distributed.initialize()
+    jax.distributed.initialize()
     # 创建 Gradio 界面
     with gr.Blocks() as demo:
         gr.Markdown("## 语音转文本工具")
