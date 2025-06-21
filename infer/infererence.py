@@ -157,8 +157,8 @@ def remove_symbols(text):
     return re.sub(r"<\|([^|]+)\|>", r"\1", text)
 
 def process_audio(file_path):
-    BATCH_SIZE = 16
-    LANGUAGE_DETECT_BATCH_SIZE = 8
+    BATCH_SIZE = jax.device_count() * 1
+    LANGUAGE_DETECT_BATCH_SIZE = jax.device_count() * 1
     device_mesh = mesh_utils.create_device_mesh((jax.device_count(),))
     mesh = Mesh(device_mesh, axis_names=("data",))
     
@@ -231,9 +231,10 @@ def process_audio(file_path):
     
     params = jax.device_put(params, replicate_sharding)
     jitted_language_detect_func = jax.jit(language_detect_wrap, in_shardings=(replicate_sharding, x_sharding), out_shardings=x_sharding)
-    language_detect_segments = jnp.stack(audio_segments[:LANGUAGE_DETECT_BATCH_SIZE], axis=0)
+    language_detect_segments = np.stack(audio_segments[:LANGUAGE_DETECT_BATCH_SIZE], axis=0)
     LD_B_padding = LANGUAGE_DETECT_BATCH_SIZE - language_detect_segments.shape[0]
-    padded_language_detect_segments = jnp.pad(language_detect_segments, ((0, LD_B_padding), (0, 0), (0, 0)))
+    padded_language_detect_segments = np.pad(language_detect_segments, ((0, LD_B_padding), (0, 0), (0, 0)))
+    padded_language_detect_segments = jnp.asarray(padded_language_detect_segments)
     if logits is None:
         logits = jitted_language_detect_func(params, padded_language_detect_segments)
     else:
