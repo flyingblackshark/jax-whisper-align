@@ -166,13 +166,13 @@ def process_audio(file_path):
     global whisper_model_cache
     global whisper_model_params_cache
     if whisper_model_processor_cache is None:
-        processor = WhisperProcessor.from_pretrained("openai/whisper-large-v3")
+        processor = WhisperProcessor.from_pretrained("distil-whisper/distil-large-v3.5")
         whisper_model_processor_cache = processor
     else:
         processor = whisper_model_processor_cache
     if whisper_model_cache is None or whisper_model_params_cache is None:
         model, params = FlaxWhisperForConditionalGeneration.from_pretrained(
-            "openai/whisper-large-v3",
+            "distil-whisper/distil-large-v3.5",
             _do_init=False,
             dtype=jnp.bfloat16,
         )
