@@ -240,7 +240,6 @@ def process_audio(file_path):
         logits += jitted_language_detect_func(params, padded_language_detect_segments)
     def language_mask_wrap(logits):
         logits = np.sum(logits, axis=0, keepdims=True)
-        print(logits.shape[-1])
         mask = np.ones(logits.shape[-1], dtype=np.bool)
         mask[all_language_tokens()] = False
         logits = np.where(mask, -np.inf, logits)
