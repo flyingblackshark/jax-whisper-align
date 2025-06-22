@@ -60,9 +60,9 @@ gpu = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/your-username/whisper-jax-ctc"
-Repository = "https://github.com/your-username/whisper-jax-ctc"
-Issues = "https://github.com/your-username/whisper-jax-ctc/issues"
+Homepage = "https://github.com/flyingblackshark/jax-whisper-align"
+Repository = "https://github.com/flyingblackshark/jax-whisper-align"
+Issues = "https://github.com/flyingblackshark/jax-whisper-align/issues"
 
 [tool.setuptools.packages.find]
 where = ["src"]
