@@ -1,6 +1,99 @@
+[build-system]
+requires = ["setuptools>=45", "wheel", "setuptools_scm[toml]>=6.2"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jaxwhisperalign"
+version = "0.1.1"
+description = "JAX implementation of OpenAI's Whisper model with Forced Alignment"
+readme = "README.md"
+requires-python = ">=3.8"
+license = {file = "LICENSE"}
+authors = [
+  { name="FlyingBlackShark", email="" },
+]
+keywords = [
+    "whisper",
+    "speech recognition",
+    "forced alignment",
+    "jax",
+    "machine learning",
+    "audio processing",
+    "transformer",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Multimedia :: Sound/Audio :: Analysis",
+    "Topic :: Multimedia :: Sound/Audio :: Speech",
+]
+dependencies = [
+    "librosa",
+    "nltk",
+    "onnxruntime",
+    "flax",
+    "transformers",
+    "jax>=0.4.0",
+    "jaxlib>=0.4.0",
+    "gradio",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=6.0",
+    "pytest-cov>=2.0",
+    "black>=21.0",
+    "flake8>=3.8",
+    "mypy>=0.800",
+]
+gpu = [
+    "jax[cuda]",
+]
+
+[project.urls]
+Homepage = "https://github.com/your-username/whisper-jax-ctc"
+Repository = "https://github.com/your-username/whisper-jax-ctc"
+Issues = "https://github.com/your-username/whisper-jax-ctc/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+jaxwhisperalign = ["assets/*.onnx"]
+
 [tool.black]
 line-length = 119
 target-version = ['py311']
+include = '\.pyi?$'
+extend-exclude = '''
+(
+  /(
+      \.eggs
+    | \.git
+    | \.hg
+    | \.mypy_cache
+    | \.tox
+    | \.venv
+    | _build
+    | buck-out
+    | build
+    | dist
+  )/
+)
+'''
+
+[tool.isort]
+profile = "black"
+line_length = 119
 
 [tool.ruff]
 # Never enforce `E501` (line length violations).
@@ -14,4 +107,17 @@ line-length = 119
 
 [tool.ruff.isort]
 lines-after-imports = 2
-known-first-party = ["distil_whisper"]
+known-first-party = ["jaxwhisperalign"]
+
+[tool.mypy]
+python_version = "3.8"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+
+[tool.pytest.ini_options]
+minversion = "6.0"
+addopts = "-ra -q --strict-markers"
+testpaths = [
+    "tests",
+]
