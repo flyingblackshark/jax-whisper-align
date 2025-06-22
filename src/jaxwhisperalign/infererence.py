@@ -3,18 +3,18 @@ import jax
 import jax.numpy as jnp
 from transformers import WhisperProcessor
 import numpy as np
-from whisper_jax import FlaxWhisperForConditionalGeneration
+from jaxwhisperalign import FlaxWhisperForConditionalGeneration
 import os
 import librosa
 from jax.experimental import mesh_utils
 from jax.sharding import Mesh, NamedSharding, PartitionSpec
-from vad import (
+from jaxwhisperalign.vad import (
     VadOptions,
     get_speech_timestamps,
     merge_segments,
 )
 import re
-from align import load_align_model, align, SingleSegment
+from jaxwhisperalign.align import load_align_model, align, SingleSegment
 def format_time(seconds):
     hours = int(seconds // 3600)
     minutes = int((seconds % 3600) // 60)

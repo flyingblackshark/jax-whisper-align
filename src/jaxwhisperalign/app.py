@@ -1,13 +1,9 @@
 import gradio as gr
-import os
-import csv
 import jax
 import gradio as gr
-import infererence
+from jaxwhisperalign import infererence
 def transcribe_audio(audio_file):
-
     segments,detected_language = infererence.process_audio(audio_file)
-
     output_segments = [
         {
             "start": segment["start"] / 16000,

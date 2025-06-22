@@ -54,8 +54,8 @@ from transformers.utils import (
     replace_return_docstrings,
 )
 
-from whisper_jax import layers
-from whisper_jax.layers import with_sharding_constraint
+from jaxwhisperalign import layers
+from jaxwhisperalign.layers import with_sharding_constraint
 
 
 logger = logging.get_logger(__name__)

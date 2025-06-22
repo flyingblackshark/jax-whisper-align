@@ -1,2 +1,2 @@
-Run bash infer/install.sh
-Run infer/app.py
+Run bash setup.sh
+Run python -m src.jaxwhisperalign.app.py
