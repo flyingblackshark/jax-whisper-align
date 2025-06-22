@@ -3,7 +3,7 @@ import jax
 import jax.numpy as jnp
 from transformers import WhisperProcessor
 import numpy as np
-from jaxwhisperalign import FlaxWhisperForConditionalGeneration
+from jaxwhisperalign.modeling_flax_whisper import FlaxWhisperForConditionalGeneration
 import os
 import librosa
 from jax.experimental import mesh_utils
