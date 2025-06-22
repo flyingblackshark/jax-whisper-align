@@ -1,0 +1,13 @@
+.vscode
+.conda
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+*.pdb
+*.egg-info/
+jax_cache/
+input/
+output/
+dist/
+.env
