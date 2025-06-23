@@ -1,15 +1,16 @@
 from dataclasses import dataclass
-from typing import Iterable, Union, List
+import time
+from dataclasses import dataclass
+from typing import Iterable, Union, List, TypedDict, Optional
 
 import numpy as np
 import pandas as pd
-from transformers import FlaxWav2Vec2ForCTC, Wav2Vec2Processor
-from jax.experimental import mesh_utils
 import jax
 import jax.numpy as jnp
 from jax.sharding import Mesh, NamedSharding, PartitionSpec
-
-from typing import TypedDict, Optional, List
+from transformers import FlaxWav2Vec2ForCTC, Wav2Vec2Processor
+import nltk
+from nltk.tokenize.punkt import PunktSentenceTokenizer, PunktParameters
 
 class SingleWordSegment(TypedDict):
     word: str
@@ -47,12 +48,14 @@ class AlignedTranscriptionResult(TypedDict):
     segments: List[SingleAlignedSegment]
     word_segments: List[SingleWordSegment]
 
-import nltk
-from nltk.tokenize.punkt import PunktSentenceTokenizer, PunktParameters
-
+# Constants
 PUNKT_ABBREVIATIONS = ['dr', 'vs', 'mr', 'mrs', 'prof']
-
 LANGUAGES_WITHOUT_SPACES = ["ja", "zh"]
+BATCH_SIZE = 16
+SAMPLE_RATE = 16000
+MAX_LENGTH_SECONDS = 32
+FRAME_SHIFT = 320
+FRAME_OFFSET = 80
 
 DEFAULT_ALIGN_MODELS_HF = {
     "en": "jonatasgrosman/wav2vec2-large-xlsr-53-english",
@@ -151,11 +154,13 @@ def align(
         text = segment["text"]
 
         # split into words
+        # Split text into words based on language
         if model_lang not in LANGUAGES_WITHOUT_SPACES:
             per_word = text.split(" ")
         else:
-            per_word = text
+            per_word = list(text)
 
+        # Clean characters and track their indices
         clean_char, clean_cdx = [], []
         for cdx, char in enumerate(text):
             char_ = char.lower()
@@ -163,18 +168,17 @@ def align(
             if model_lang not in LANGUAGES_WITHOUT_SPACES:
                 char_ = char_.replace(" ", "|")
             
-            if cdx < num_leading:
-                pass
-            elif cdx > len(text) - num_trailing - 1:
-                pass
-            elif char_ in model_dictionary.keys():
+            # Skip leading/trailing whitespace and check if char is in dictionary
+            if (num_leading <= cdx <= len(text) - num_trailing - 1 and 
+                char_ in model_dictionary):
                 clean_char.append(char_)
                 clean_cdx.append(cdx)
 
-        clean_wdx = []
-        for wdx, wrd in enumerate(per_word):
-            if any([c in model_dictionary.keys() for c in wrd]):
-                clean_wdx.append(wdx)
+        # Find valid word indices
+        clean_wdx = [
+            wdx for wdx, wrd in enumerate(per_word)
+            if any(c.lower() in model_dictionary for c in wrd)
+        ]
 
                 
         punkt_param = PunktParameters()
@@ -195,49 +199,51 @@ def align(
     pre_waveform_segments = []
     pre_segment_lengths = []
     def pad_and_stack_waveforms(waveforms, max_length):
-    
-        return np.concatenate([
-            np.pad(w, ((0, 0), (0, max_length - w.shape[-1]))) for w in waveforms
-        ],axis=0)
+        """Pad waveforms to the same length and stack them."""
+        padded_waveforms = [
+            np.pad(w, ((0, 0), (0, max_length - w.shape[-1]))) 
+            for w in waveforms
+        ]
+        return np.concatenate(padded_waveforms, axis=0)
     def slice_emissions(emissions, lengths):
+        """Slice emissions based on actual audio lengths."""
+        return [np.asarray(emissions[i, :(l - FRAME_OFFSET)//FRAME_SHIFT,:]) for i, l in enumerate(lengths)]
     
-        return [np.asarray(emissions[i, :(l - 80)//320,:]) for i, l in enumerate(lengths)]
-    BATCH_SIZE = 16
-    import time
-    CTC_time = time.time()
+    ctc_start_time = time.time()
     def model_wrap(waveform_seg):
-        return jnp.log(jax.nn.softmax(model(waveform_seg).logits,axis=-1))
+        """Wrapper function for the CTC model."""
+        return jnp.log(jax.nn.softmax(model(waveform_seg).logits, axis=-1))
+    
     jitted_model_wrap = jax.jit(model_wrap, in_shardings=x_sharding, out_shardings=x_sharding)
     for sdx, segment in enumerate(transcript):
         
         t1 = segment["start"]
         t2 = segment["end"]
 
-        f1 = t1#int(t1 * SAMPLE_RATE)
-        f2 = t2#int(t2 * SAMPLE_RATE)
+        f1 = t1
+        f2 = t2
 
         waveform_segment = audio[:, f1:f2]
-        SAMPLE_RATE = 16000
-        MAX_LENGTH = 32 * SAMPLE_RATE
+        MAX_LENGTH = MAX_LENGTH_SECONDS * SAMPLE_RATE
         pre_waveform_segments.append(waveform_segment)
         pre_segment_lengths.append(waveform_segment.shape[-1])
         if len(pre_waveform_segments) == BATCH_SIZE or sdx == len(transcript) - 1:
     
             waveform_segments_padded = pad_and_stack_waveforms(pre_waveform_segments, MAX_LENGTH)
             lengths = np.asarray(pre_segment_lengths)
-            B_padding = BATCH_SIZE - waveform_segments_padded.shape[0]
-            waveform_segments_padded = np.pad(waveform_segments_padded,((0,B_padding),(0,0)))
+            batch_padding = BATCH_SIZE - waveform_segments_padded.shape[0]
+            waveform_segments_padded = np.pad(waveform_segments_padded, ((0, batch_padding), (0, 0)))
 
             if model_type == "huggingface":
                 emissions_batch = jitted_model_wrap(waveform_segments_padded)
             else:
                 raise NotImplementedError(f"Align model of type {model_type} not supported.")
-            emissions_batch = emissions_batch[:BATCH_SIZE-B_padding]
+            emissions_batch = emissions_batch[:BATCH_SIZE - batch_padding]
             pre_emissions.extend(slice_emissions(emissions_batch, lengths))
             pre_waveform_segments = []
             pre_segment_lengths = []
-    count_CTC_time = time.time()
-    print(f"CTC耗时:{count_CTC_time-CTC_time}")
+    ctc_end_time = time.time()
+    print(f"CTC processing time: {ctc_end_time - ctc_start_time:.2f}s")
 
     for sdx, segment in enumerate(transcript):
         
@@ -271,10 +277,12 @@ def align(
 
         emission = pre_emissions[sdx]
 
+        # Find blank token ID
         blank_id = 0
         for char, code in model_dictionary.items():
-            if char == '[pad]' or char == '<pad>':
+            if char in ['[pad]', '<pad>']:
                 blank_id = code
+                break
 
         trellis = get_trellis(emission, tokens, blank_id)
         path = backtrack(trellis, emission, tokens, blank_id)
@@ -286,8 +294,8 @@ def align(
 
         char_segments = merge_repeats(path, text_clean)
 
-        duration = t2 -t1
-        ratio = duration * waveform_segment.shape[0] / (trellis.shape[0] - 1)
+        duration = t2 - t1
+        ratio = duration / (trellis.shape[0] - 1)
 
 
         char_segments_arr = []
@@ -344,13 +352,13 @@ def align(
                 word_end = word_chars["end"].max()
                 word_score = round(word_chars["score"].mean(), 3)
 
- 
+                # Create word segment with available data
                 word_segment = {"word": word_text}
-
+                
                 if not np.isnan(word_start):
-                    word_segment["start"] = word_start
+                    word_segment["start"] = round(word_start, 3)
                 if not np.isnan(word_end):
-                    word_segment["end"] = word_end
+                    word_segment["end"] = round(word_end, 3)
                 if not np.isnan(word_score):
                     word_segment["score"] = word_score
 
@@ -358,8 +366,8 @@ def align(
             
             aligned_subsegments.append({
                 "text": sentence_text,
-                "start": sentence_start,
-                "end": sentence_end,
+                "start": round(sentence_start, 3) if not np.isnan(sentence_start) else None,
+                "end": round(sentence_end, 3) if not np.isnan(sentence_end) else None,
                 "words": sentence_words,
             })
 
@@ -370,18 +378,27 @@ def align(
                 curr_chars = [{key: val for key, val in char.items() if val != -1} for char in curr_chars]
                 aligned_subsegments[-1]["chars"] = curr_chars
 
-        aligned_subsegments = pd.DataFrame(aligned_subsegments)
-        aligned_subsegments["start"] = interpolate_nans(aligned_subsegments["start"], method=interpolate_method)
-        aligned_subsegments["end"] = interpolate_nans(aligned_subsegments["end"], method=interpolate_method)
+        # Process aligned subsegments
+        if aligned_subsegments:
+            aligned_subsegments_df = pd.DataFrame(aligned_subsegments)
+            aligned_subsegments_df["start"] = interpolate_nans(
+                aligned_subsegments_df["start"], method=interpolate_method
+            )
+            aligned_subsegments_df["end"] = interpolate_nans(
+                aligned_subsegments_df["end"], method=interpolate_method
+            )
 
-        agg_dict = {"text": " ".join, "words": "sum"}
-        if model_lang in LANGUAGES_WITHOUT_SPACES:
-            agg_dict["text"] = "".join
-        if return_char_alignments:
-            agg_dict["chars"] = "sum"
-        aligned_subsegments= aligned_subsegments.groupby(["start", "end"], as_index=False).agg(agg_dict)
-        aligned_subsegments = aligned_subsegments.to_dict('records')
-        aligned_segments += aligned_subsegments
+            # Aggregate segments
+            agg_dict = {"text": " ".join, "words": "sum"}
+            if model_lang in LANGUAGES_WITHOUT_SPACES:
+                agg_dict["text"] = "".join
+            if return_char_alignments:
+                agg_dict["chars"] = "sum"
+            
+            aligned_subsegments_df = aligned_subsegments_df.groupby(
+                ["start", "end"], as_index=False
+            ).agg(agg_dict)
+            aligned_segments += aligned_subsegments_df.to_dict('records')
 
 
     word_segments: List[SingleWordSegment] = []
@@ -393,20 +410,22 @@ def align(
 
 
 def get_trellis(emission, tokens, blank_id=0):
+    """Compute the trellis matrix for CTC alignment."""
     num_frame = emission.shape[0]
     num_tokens = len(tokens)
+    
+    # Initialize trellis
     trellis = np.empty((num_frame + 1, num_tokens + 1))
     trellis[0, 0] = 0
-    trellis[1:, 0] = np.cumsum(emission[:, 0], 0)
+    trellis[1:, 0] = np.cumsum(emission[:, blank_id], 0)
     trellis[0, -num_tokens:] = -float("inf")
     trellis[-num_tokens:, 0] = float("inf")
 
+    # Fill trellis using dynamic programming
     for t in range(num_frame):
         trellis[t + 1, 1:] = np.maximum(
-
-            trellis[t, 1:] + emission[t, blank_id],
-
-            trellis[t, :-1] + emission[t, tokens],
+            trellis[t, 1:] + emission[t, blank_id],  # Stay in same state
+            trellis[t, :-1] + emission[t, tokens],   # Advance to next token
         )
     return trellis
 
@@ -417,30 +436,30 @@ class Point:
     score: float
 
 def backtrack(trellis, emission, tokens, blank_id=0):
-
+    """Backtrack through the trellis to find the optimal alignment path."""
     j = trellis.shape[1] - 1
     t_start = np.argmax(trellis[:, j])
 
     path = []
     for t in range(t_start, 0, -1):
-
+        # Calculate scores for staying vs advancing
         stayed = trellis[t - 1, j] + emission[t - 1, blank_id]
-
         changed = trellis[t - 1, j - 1] + emission[t - 1, tokens[j - 1]]
 
-
-        prob = np.exp(emission[t - 1, tokens[j - 1] if changed > stayed else 0])
-
+        # Choose the better path and calculate probability
+        token_idx = tokens[j - 1] if changed > stayed else blank_id
+        prob = np.exp(emission[t - 1, token_idx])
         path.append(Point(j - 1, t - 1, prob))
 
-
+        # Advance token index if we took the "changed" path
         if changed > stayed:
             j -= 1
             if j == 0:
                 break
     else:
-
+        # Failed to reach the beginning
         return None
+    
     return path[::-1]
 
 
@@ -459,12 +478,22 @@ class Segment:
         return self.end - self.start
 
 def merge_repeats(path, transcript):
-    i1, i2 = 0, 0
+    """Merge consecutive path points with the same token index."""
+    if not path:
+        return []
+    
     segments = []
+    i1 = 0
+    
     while i1 < len(path):
+        i2 = i1
+        # Find all consecutive points with the same token index
         while i2 < len(path) and path[i1].token_index == path[i2].token_index:
             i2 += 1
+        
+        # Calculate average score for this segment
         score = sum(path[k].score for k in range(i1, i2)) / (i2 - i1)
+        
         segments.append(
             Segment(
                 transcript[path[i1].token_index],
@@ -474,20 +503,38 @@ def merge_repeats(path, transcript):
             )
         )
         i1 = i2
+    
     return segments
 
 def merge_words(segments, separator="|"):
+    """Merge character segments into word segments."""
+    if not segments:
+        return []
+    
     words = []
-    i1, i2 = 0, 0
+    i1 = 0
+    
     while i1 < len(segments):
-        if i2 >= len(segments) or segments[i2].label == separator:
-            if i1 != i2:
-                segs = segments[i1:i2]
-                word = "".join([seg.label for seg in segs])
-                score = sum(seg.score * seg.length for seg in segs) / sum(seg.length for seg in segs)
-                words.append(Segment(word, segments[i1].start, segments[i2 - 1].end, score))
-            i1 = i2 + 1
-            i2 = i1
-        else:
+        i2 = i1
+        # Find segments until separator or end
+        while i2 < len(segments) and segments[i2].label != separator:
             i2 += 1
+        
+        # Create word from character segments
+        if i1 != i2:
+            segs = segments[i1:i2]
+            word = "".join(seg.label for seg in segs)
+            
+            # Calculate weighted average score
+            total_length = sum(seg.length for seg in segs)
+            if total_length > 0:
+                score = sum(seg.score * seg.length for seg in segs) / total_length
+            else:
+                score = 0.0
+            
+            words.append(Segment(word, segments[i1].start, segments[i2 - 1].end, score))
+        
+        # Skip separator
+        i1 = i2 + 1
+    
     return words
