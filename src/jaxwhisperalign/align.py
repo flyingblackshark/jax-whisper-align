@@ -205,6 +205,9 @@ def align(
     BATCH_SIZE = 16
     import time
     CTC_time = time.time()
+    def model_wrap(waveform_seg):
+        return jnp.log(jax.nn.softmax(model(waveform_seg).logits,axis=-1))
+    jitted_model_wrap = jax.jit(model_wrap, in_shardings=x_sharding, out_shardings=x_sharding)
     for sdx, segment in enumerate(transcript):
         
         t1 = segment["start"]
@@ -226,11 +229,7 @@ def align(
             waveform_segments_padded = np.pad(waveform_segments_padded,((0,B_padding),(0,0)))
 
             if model_type == "huggingface":
-                def model_wrap(waveform_seg):
-                    return jnp.log(jax.nn.softmax(model(waveform_seg).logits,axis=-1))
-                emissions_batch = jax.jit(
-                model_wrap, in_shardings=x_sharding, out_shardings=x_sharding
-                )(waveform_segments_padded)
+                emissions_batch = jitted_model_wrap(waveform_segments_padded)
             else:
                 raise NotImplementedError(f"Align model of type {model_type} not supported.")
             emissions_batch = emissions_batch[:BATCH_SIZE-B_padding]
