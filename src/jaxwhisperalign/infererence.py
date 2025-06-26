@@ -301,7 +301,7 @@ def process_audio(file_path: str, language: Optional[str] = None) -> Tuple[List[
         detected_language = processor.decode(language_tokens[0, 0])
     else:
         # Use provided language
-        detected_language = language
+        detected_language = f"<|{language}|>"
         print(f"Using specified language: {language}")
 
     
