@@ -180,11 +180,12 @@ def remove_symbols(text: str) -> str:
     """Remove special symbols from text."""
     return re.sub(r"<\|([^|]+)\|>", r"\1", text)
 
-def process_audio(file_path: str) -> Tuple[List[Dict[str, Any]], str]:
+def process_audio(file_path: str, language: Optional[str] = None) -> Tuple[List[Dict[str, Any]], str]:
     """Process audio file and return aligned segments.
     
     Args:
         file_path: Path to audio file
+        language: Language code for transcription. If None, auto-detect language.
         
     Returns:
         Tuple of (segments, detected_language)
@@ -269,32 +270,39 @@ def process_audio(file_path: str) -> Tuple[List[Dict[str, Any]], str]:
     
     
     params = jax.device_put(params, replicate_sharding)
-    # Language detection
-    jitted_language_detect_func = jax.jit(
-        language_detect_wrap, 
-        in_shardings=(replicate_sharding, x_sharding), 
-        out_shardings=x_sharding
-    )
-    language_detect_segments = np.stack(audio_segments[:language_detect_batch_size], axis=0)
-    ld_padding = language_detect_batch_size - language_detect_segments.shape[0]
-    padded_language_detect_segments = np.pad(
-        language_detect_segments, ((0, ld_padding), (0, 0), (0, 0))
-    )
-    padded_language_detect_segments = jnp.asarray(padded_language_detect_segments)
-    if logits is None:
-        logits = jitted_language_detect_func(params, padded_language_detect_segments)
+    # Language detection or use provided language
+    if language is None or language == "auto":
+        # Auto-detect language
+        jitted_language_detect_func = jax.jit(
+            language_detect_wrap, 
+            in_shardings=(replicate_sharding, x_sharding), 
+            out_shardings=x_sharding
+        )
+        language_detect_segments = np.stack(audio_segments[:language_detect_batch_size], axis=0)
+        ld_padding = language_detect_batch_size - language_detect_segments.shape[0]
+        padded_language_detect_segments = np.pad(
+            language_detect_segments, ((0, ld_padding), (0, 0), (0, 0))
+        )
+        padded_language_detect_segments = jnp.asarray(padded_language_detect_segments)
+        if logits is None:
+            logits = jitted_language_detect_func(params, padded_language_detect_segments)
+        else:
+            logits += jitted_language_detect_func(params, padded_language_detect_segments)
+        
+        def language_mask_wrap(logits):
+            logits = np.sum(logits, axis=0, keepdims=True)
+            mask = np.ones(logits.shape[-1], dtype=np.bool)
+            mask[all_language_tokens()] = False
+            logits = np.where(mask, -np.inf, logits)
+            language_tokens = np.argmax(logits, axis=-1)
+            return language_tokens
+        
+        language_tokens = language_mask_wrap(np.asarray(logits))
+        detected_language = processor.decode(language_tokens[0, 0])
     else:
-        logits += jitted_language_detect_func(params, padded_language_detect_segments)
-    def language_mask_wrap(logits):
-        logits = np.sum(logits, axis=0, keepdims=True)
-        mask = np.ones(logits.shape[-1], dtype=np.bool)
-        mask[all_language_tokens()] = False
-        logits = np.where(mask, -np.inf, logits)
-        language_tokens = np.argmax(logits, axis=-1)
-        return language_tokens
-    
-    language_tokens = language_mask_wrap(np.asarray(logits))
-    detected_language = processor.decode(language_tokens[0, 0])
+        # Use provided language
+        detected_language = language
+        print(f"Using specified language: {language}")
 
     
     # Batch transcription
