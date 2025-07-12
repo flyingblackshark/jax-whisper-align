@@ -110,13 +110,85 @@ def load_align_model(mesh,language_code, model_name=None, model_dir=None):
     processor = Wav2Vec2Processor.from_pretrained(model_name)
     align_model = FlaxWav2Vec2ForCTC.from_pretrained(model_name)
     align_model.params = jax.device_put(align_model.params, NamedSharding(mesh, PartitionSpec()))
-    pipeline_type = "huggingface"
     align_dictionary = {char.lower(): code for char,code in processor.tokenizer.get_vocab().items()}
 
-    align_metadata = {"language": language_code, "dictionary": align_dictionary, "type": pipeline_type}
+    align_metadata = {"language": language_code, "dictionary": align_dictionary}
 
     return align_model, align_metadata
 
+def process_ctc_emissions(
+    transcript: Iterable[SingleSegment],
+    model,
+    audio: np.ndarray,
+    mesh
+) -> List[np.ndarray]:
+    """
+    处理CTC模型，生成emissions
+    
+    Args:
+        transcript: 转录段列表
+        model: CTC模型
+        model_type: 模型类型
+        audio: 音频数据
+        mesh: JAX mesh
+        
+    Returns:
+        List[np.ndarray]: 每个段的emissions列表
+    """
+    x_sharding = NamedSharding(mesh, PartitionSpec("data"))
+    pre_emissions = []
+    pre_waveform_segments = []
+    pre_segment_lengths = []
+    
+    def pad_and_stack_waveforms(waveforms, max_length):
+        """Pad waveforms to the same length and stack them."""
+        padded_waveforms = [
+            np.pad(w, ((0, 0), (0, max_length - w.shape[-1]))) 
+            for w in waveforms
+        ]
+        return np.concatenate(padded_waveforms, axis=0)
+    
+    def slice_emissions(emissions, lengths):
+        """Slice emissions based on actual audio lengths."""
+        return [np.asarray(emissions[i, :(l - FRAME_OFFSET)//FRAME_SHIFT,:]) for i, l in enumerate(lengths)]
+    
+    def model_wrap(waveform_seg):
+        """Wrapper function for the CTC model."""
+        return jnp.log(jax.nn.softmax(model(waveform_seg).logits, axis=-1))
+    
+    jitted_model_wrap = jax.jit(model_wrap, in_shardings=x_sharding, out_shardings=x_sharding)
+    
+    ctc_start_time = time.time()
+    
+    for sdx, segment in enumerate(transcript):
+        t1 = segment["start"]
+        t2 = segment["end"]
+        
+        f1 = t1
+        f2 = t2
+        
+        waveform_segment = audio[:, f1:f2]
+        MAX_LENGTH = MAX_LENGTH_SECONDS * SAMPLE_RATE
+        pre_waveform_segments.append(waveform_segment)
+        pre_segment_lengths.append(waveform_segment.shape[-1])
+        
+        if len(pre_waveform_segments) == BATCH_SIZE or sdx == len(transcript) - 1:
+            waveform_segments_padded = pad_and_stack_waveforms(pre_waveform_segments, MAX_LENGTH)
+            lengths = np.asarray(pre_segment_lengths)
+            batch_padding = BATCH_SIZE - waveform_segments_padded.shape[0]
+            waveform_segments_padded = np.pad(waveform_segments_padded, ((0, batch_padding), (0, 0)))
+            
+            emissions_batch = jitted_model_wrap(waveform_segments_padded)
+
+            emissions_batch = emissions_batch[:BATCH_SIZE - batch_padding]
+            pre_emissions.extend(slice_emissions(emissions_batch, lengths))
+            pre_waveform_segments = []
+            pre_segment_lengths = []
+    
+    ctc_end_time = time.time()
+    print(f"CTC processing time: {ctc_end_time - ctc_start_time:.2f}s")
+    
+    return pre_emissions
 
 def align(
     transcript: Iterable[SingleSegment],
@@ -137,8 +209,6 @@ def align(
 
     model_dictionary = align_model_metadata["dictionary"]
     model_lang = align_model_metadata["language"]
-    model_type = align_model_metadata["type"]
-
 
     total_segments = len(transcript)
     for sdx, segment in enumerate(transcript):
@@ -190,59 +260,8 @@ def align(
         segment["clean_wdx"] = clean_wdx
         segment["sentence_spans"] = sentence_spans
     
+    pre_emissions = process_ctc_emissions(transcript, model, audio, mesh)
     aligned_segments: List[SingleAlignedSegment] = []
-    
-    
-    x_sharding = NamedSharding(mesh,PartitionSpec("data"))
-    pre_emissions = []
-    pre_waveform_segments = []
-    pre_segment_lengths = []
-    def pad_and_stack_waveforms(waveforms, max_length):
-        """Pad waveforms to the same length and stack them."""
-        padded_waveforms = [
-            np.pad(w, ((0, 0), (0, max_length - w.shape[-1]))) 
-            for w in waveforms
-        ]
-        return np.concatenate(padded_waveforms, axis=0)
-    def slice_emissions(emissions, lengths):
-        """Slice emissions based on actual audio lengths."""
-        return [np.asarray(emissions[i, :(l - FRAME_OFFSET)//FRAME_SHIFT,:]) for i, l in enumerate(lengths)]
-    
-    ctc_start_time = time.time()
-    def model_wrap(waveform_seg):
-        """Wrapper function for the CTC model."""
-        return jnp.log(jax.nn.softmax(model(waveform_seg).logits, axis=-1))
-    
-    jitted_model_wrap = jax.jit(model_wrap, in_shardings=x_sharding, out_shardings=x_sharding)
-    for sdx, segment in enumerate(transcript):
-        
-        t1 = segment["start"]
-        t2 = segment["end"]
-
-        f1 = t1
-        f2 = t2
-
-        waveform_segment = audio[:, f1:f2]
-        MAX_LENGTH = MAX_LENGTH_SECONDS * SAMPLE_RATE
-        pre_waveform_segments.append(waveform_segment)
-        pre_segment_lengths.append(waveform_segment.shape[-1])
-        if len(pre_waveform_segments) == BATCH_SIZE or sdx == len(transcript) - 1:
-    
-            waveform_segments_padded = pad_and_stack_waveforms(pre_waveform_segments, MAX_LENGTH)
-            lengths = np.asarray(pre_segment_lengths)
-            batch_padding = BATCH_SIZE - waveform_segments_padded.shape[0]
-            waveform_segments_padded = np.pad(waveform_segments_padded, ((0, batch_padding), (0, 0)))
-
-            if model_type == "huggingface":
-                emissions_batch = jitted_model_wrap(waveform_segments_padded)
-            else:
-                raise NotImplementedError(f"Align model of type {model_type} not supported.")
-            emissions_batch = emissions_batch[:BATCH_SIZE - batch_padding]
-            pre_emissions.extend(slice_emissions(emissions_batch, lengths))
-            pre_waveform_segments = []
-            pre_segment_lengths = []
-    ctc_end_time = time.time()
-    print(f"CTC processing time: {ctc_end_time - ctc_start_time:.2f}s")
 
     for sdx, segment in enumerate(transcript):
         
