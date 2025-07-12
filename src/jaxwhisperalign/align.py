@@ -14,7 +14,7 @@ from nltk.tokenize.punkt import PunktSentenceTokenizer, PunktParameters
 import concurrent.futures
 import threading
 from functools import partial
-
+import os
 class SingleWordSegment(TypedDict):
     word: str
     start: float
@@ -430,7 +430,7 @@ def align(
         segment["sentence_spans"] = sentence_spans
     
     # 使用封装的CTC处理函数
-    pre_emissions = process_ctc_emissions(transcript, model, model_type, audio, mesh)
+    pre_emissions = process_ctc_emissions(transcript, model, audio, mesh)
     
     # 准备多线程处理的数据
     segment_data_list = []
@@ -443,7 +443,7 @@ def align(
     
     # 如果没有指定max_workers，使用CPU核心数
     if max_workers is None:
-        max_workers = min(len(segment_data_list), 128)  # 限制最大线程数为8
+        max_workers = min(len(segment_data_list),os.cpu_count() )  # 限制最大线程数为8
     
     process_func = partial(
         process_segment_alignment,
