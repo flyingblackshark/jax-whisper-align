@@ -99,7 +99,7 @@ def interpolate_nans(x, method='nearest'):
     else:
         return x.ffill().bfill()
 
-def load_align_model(language_code, model_name=None, model_dir=None):
+def load_align_model(mesh,language_code, model_name=None, model_dir=None):
     if model_name is None:
         if language_code in DEFAULT_ALIGN_MODELS_HF:
             model_name = DEFAULT_ALIGN_MODELS_HF[language_code]
@@ -109,6 +109,7 @@ def load_align_model(language_code, model_name=None, model_dir=None):
 
     processor = Wav2Vec2Processor.from_pretrained(model_name)
     align_model = FlaxWav2Vec2ForCTC.from_pretrained(model_name)
+    align_model.params = jax.device_put(align_model.params, NamedSharding(mesh, PartitionSpec()))
     pipeline_type = "huggingface"
     align_dictionary = {char.lower(): code for char,code in processor.tokenizer.get_vocab().items()}
 

@@ -158,7 +158,7 @@ global_align_model_cache: Dict[str, Tuple[Any, Any]] = {}
 whisper_model_cache: Optional[Any] = None
 whisper_model_params_cache: Optional[Any] = None
 whisper_model_processor_cache: Optional[WhisperProcessor] = None
-def get_align_model_with_cache(language_code: str) -> Tuple[Any, Any]:
+def get_align_model_with_cache(mesh,language_code: str) -> Tuple[Any, Any]:
     """Get alignment model with caching.
     
     Args:
@@ -172,7 +172,7 @@ def get_align_model_with_cache(language_code: str) -> Tuple[Any, Any]:
         return global_align_model_cache[language_code]
     
     print(f"Loading align model for language: {language_code}")
-    model_a, metadata = load_align_model(language_code=language_code)
+    model_a, metadata = load_align_model(mesh,language_code=language_code)
     global_align_model_cache[language_code] = (model_a, metadata)
     return model_a, metadata
 
@@ -331,6 +331,7 @@ def process_audio(file_path: str, language: Optional[str] = None) -> Tuple[List[
 
     # Alignment
     model_a, metadata = get_align_model_with_cache(
+        mesh=mesh,
         language_code=remove_symbols(detected_language)
     )
     
