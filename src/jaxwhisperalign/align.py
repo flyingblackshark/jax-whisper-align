@@ -1,4 +1,3 @@
-from dataclasses import dataclass
 import time
 from dataclasses import dataclass
 from typing import Iterable, Union, List, TypedDict, Optional
@@ -11,9 +10,7 @@ from jax.sharding import Mesh, NamedSharding, PartitionSpec
 from transformers import FlaxWav2Vec2ForCTC, Wav2Vec2Processor
 import nltk
 from nltk.tokenize.punkt import PunktSentenceTokenizer, PunktParameters
-import concurrent.futures
-from functools import partial
-import os
+
 class SingleWordSegment(TypedDict):
     word: str
     start: float
