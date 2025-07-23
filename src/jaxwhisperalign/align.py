@@ -247,7 +247,8 @@ def process_segment_alignment(
     
     # 这里是多线程处理的核心部分
     trellis = get_trellis(emission, tokens, blank_id)
-    path = backtrack(trellis, emission, tokens, blank_id)
+    #path = backtrack(trellis, emission, tokens, blank_id)
+    path = backtrack_beam(trellis, emission, tokens, blank_id, beam_width=2)
     
     if path is None:
         print(f'Failed to align segment ("{segment["text"]}"): backtrack failed, resorting to original...')
@@ -546,7 +547,126 @@ def backtrack(trellis, emission, tokens, blank_id=0):
         return None
     
     return path[::-1]
+@dataclass
+class BeamState:
+    """State in beam search."""
+    token_index: int   # Current token position
+    time_index: int    # Current time step
+    score: float       # Cumulative score
+    path: List[Point]  # Path history
+    
+def get_wildcard_emission(frame_emission, tokens, blank_id):
+    """Processing token emission scores containing wildcards (vectorized version)
 
+    Args:
+        frame_emission: Emission probability vector for the current frame
+        tokens: List of token indices
+        blank_id: ID of the blank token
+
+    Returns:
+        ndarray: Maximum probability score for each token position
+    """
+    assert 0 <= blank_id < len(frame_emission)
+
+    # Convert tokens to a numpy array if they are not already
+    tokens = np.array(tokens) if not isinstance(tokens, np.ndarray) else tokens
+
+    # Create a mask to identify wildcard positions
+    wildcard_mask = (tokens == -1)
+
+    # Get scores for non-wildcard positions
+    regular_scores = frame_emission[np.clip(tokens, 0, None)]  # clip to avoid -1 index
+
+    # Create a mask and compute the maximum value without modifying frame_emission
+    max_valid_score = frame_emission.copy()   # Create a copy
+    max_valid_score[blank_id] = float('-inf')  # Modify the copy to exclude the blank token
+    max_valid_score = max_valid_score.max()
+
+    # Use where operation to combine results
+    result = np.where(wildcard_mask, max_valid_score, regular_scores)
+
+    return result
+
+def backtrack_beam(trellis, emission, tokens, blank_id=0, beam_width=5):
+    """Standard CTC beam search backtracking implementation.
+
+    Args:
+        trellis (np.ndarray): The trellis (or lattice) of shape (T, N), where T is the number of time steps
+                              and N is the number of tokens (including the blank token).
+        emission (np.ndarray): The emission probabilities of shape (T, N).
+        tokens (List[int]): List of token indices (excluding the blank token).
+        blank_id (int, optional): The ID of the blank token. Defaults to 0.
+        beam_width (int, optional): The number of top paths to keep during beam search. Defaults to 5.
+
+    Returns:
+        List[Point]: the best path
+    """
+    T, J = trellis.shape[0] - 1, trellis.shape[1] - 1
+
+    init_state = BeamState(
+        token_index=J,
+        time_index=T,
+        score=trellis[T, J],
+        path=[Point(J, T, np.exp(emission[T, blank_id]))]
+    )
+
+    beams = [init_state]
+
+    while beams and beams[0].token_index > 0:
+        next_beams = []
+
+        for beam in beams:
+            t, j = beam.time_index, beam.token_index
+
+            if t <= 0:
+                continue
+
+            p_stay = emission[t - 1, blank_id]
+            p_change = get_wildcard_emission(emission[t - 1], [tokens[j]], blank_id)[0]
+
+            stay_score = trellis[t - 1, j]
+            change_score = trellis[t - 1, j - 1] if j > 0 else float('-inf')
+
+            # Stay
+            if not np.isinf(stay_score):
+                new_path = beam.path.copy()
+                new_path.append(Point(j, t - 1, np.exp(p_stay)))
+                next_beams.append(BeamState(
+                    token_index=j,
+                    time_index=t - 1,
+                    score=stay_score,
+                    path=new_path
+                ))
+
+            # Change
+            if j > 0 and not np.isinf(change_score):
+                new_path = beam.path.copy()
+                new_path.append(Point(j - 1, t - 1, np.exp(p_change)))
+                next_beams.append(BeamState(
+                    token_index=j - 1,
+                    time_index=t - 1,
+                    score=change_score,
+                    path=new_path
+                ))
+
+        # sort by score
+        beams = sorted(next_beams, key=lambda x: x.score, reverse=True)[:beam_width]
+
+        if not beams:
+            break
+
+    if not beams:
+        return None
+
+    best_beam = beams[0]
+    t = best_beam.time_index
+    j = best_beam.token_index
+    while t > 0:
+        prob = np.exp(emission[t - 1, blank_id])
+        best_beam.path.append(Point(j, t - 1, prob))
+        t -= 1
+
+    return best_beam.path[::-1]
 
 @dataclass
 class Segment:
