@@ -54,7 +54,7 @@ class AlignedTranscriptionResult(TypedDict):
 # Constants
 PUNKT_ABBREVIATIONS = ['dr', 'vs', 'mr', 'mrs', 'prof']
 LANGUAGES_WITHOUT_SPACES = ["ja", "zh"]
-BATCH_SIZE = 16
+BATCH_SIZE = 64
 SAMPLE_RATE = 16000
 MAX_LENGTH_SECONDS = 32
 FRAME_SHIFT = 320
@@ -182,7 +182,7 @@ def process_ctc_emissions(
             waveform_segments_padded = np.pad(waveform_segments_padded, ((0, batch_padding), (0, 0)))
             
             emissions_batch = jitted_model_wrap(waveform_segments_padded)
-
+            emissions_batch = np.asarray(emissions_batch)
             emissions_batch = emissions_batch[:BATCH_SIZE - batch_padding]
             pre_emissions.extend(slice_emissions(emissions_batch, lengths))
             pre_waveform_segments = []
